@@ -23,7 +23,7 @@ Vec3   :: struct { x, y, z: f32 }
 add    :: fn(a, b: Vec3) -> Vec3 { ... }
 ```
 
-- Errors name the declaration kind, e.g. `cannot assign to 'count': it was declared without 'mut' on line 3`.
+- Errors name the declaration kind and point at it: `Cannot assign to 'count': it was declared without 'mut'`, with the declaration underlined (see Diagnostics).
 - No shadowing: declaring a name that is already visible is a compile error.
 - `_` discards: an ignored return value (`q, _ := div_mod(17, 5);`), a catch-all `match` arm, an unused parameter, or an explicit `_ = save_game();` on a `#must_use` value.
 - `_` is also a digit separator in number literals: `1_000_000`, `0xFF_FF_00_00`.
@@ -403,6 +403,33 @@ move :: fn(q: Query(*mut Position, *Velocity), dt: f32) #system #after(input) {
 
 SoA layouts are a library type generated with `#run`, not a compiler feature. `Soa(T, N)` reads `T`'s fields through reflection and generates one array per field. Access puts the field first, so the layout is visible: `particles.pos[i] += particles.vel[i] * dt;`. Available once `#run` exists.
 
+## Diagnostics
+
+Compiler errors are meant to help, in the style of Rust's. Each one shows the source with the problem underlined, points at related code such as the original declaration, and suggests a fix when one is clear.
+
+```
+Error: Cannot assign to 'count': it was declared without 'mut'
+ --> game.slick:3:5
+  |
+2 |     count := 0;
+  |     ----- Declared here without 'mut'
+3 |     count += 1;
+  |     ^^^^^ Cannot assign
+  |
+Help: Declare it with 'mut'
+  |
+2 |     count : mut = 0;
+  |           ~~~~~~~
+
+Error: Could not compile 'game.slick' due to 1 error
+```
+
+- Text is in sentence case: every message, label, help and note starts with a capital letter. Single sentences take no final period.
+- The compiler reports every error it can find in one run instead of stopping at the first, and avoids follow-on errors caused by an earlier one.
+- Color is used when writing to a terminal. `NO_COLOR` and `--color=always|never|auto` override that.
+- Runtime panics show the source line too, without color.
+- No error codes for now.
+
 ## Compiler implementation
 
 The bootstrap compiler is written in OCaml and emits C. A later compiler will be written in the language itself.
@@ -415,6 +442,7 @@ The bootstrap compiler is written in OCaml and emits C. A later compiler will be
 Milestones:
 
 0. Minimal Turing-complete core, pushed through the whole pipeline (lex, parse, type-check, emit C, call `cc`): `i32` and `bool`; `:=` and `: mut` declarations with the immutability check; assignment and `+=`; arithmetic, comparison and logical operators; `if`/`else`, `while`; functions with parameters, `return` and recursion; a built-in `print(i32)`. Test program: recursive `fib` printed for 0 to 9.
+0.5. Diagnostics: Rust-style errors with source excerpts, labels, suggested fixes and color, in sentence case, with every error in a file reported in one run.
 1. Compile a wider subset to C: structs, pointers, the remaining integer and float types.
 2. C interop: call raylib or SDL and get Pong drawing.
 3. Signature features: generics, tagged unions, `Result` and `try`, allocator context.
@@ -446,3 +474,4 @@ Milestones:
 - [x] Shadowing: decided, not allowed (see Declarations and syntax).
 - [x] Integer overflow: decided, panics in debug builds and wraps in release (see Primitive types).
 - [x] Evaluation order: decided, strictly left to right (see Operators).
+- [x] Error message style: decided, Rust-style excerpts in sentence case (see Diagnostics).
