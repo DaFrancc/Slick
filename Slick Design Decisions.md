@@ -23,6 +23,7 @@ Vec3   :: struct { x, y, z: f32 }
 add    :: fn(a, b: Vec3) -> Vec3 { ... }
 ```
 
+- Every constant has one fixed type, inferred like a variable's (`MAX :: 1024;` is an `i32`) or written out (`SPEED : f32 : 400;`). A constant does not adapt to where it is used: `x : f32 = MAX;` needs a cast, as it would for an `i32` variable.
 - Errors name the declaration kind and point at it: `Cannot assign to 'count': it was declared without 'mut'`, with the declaration underlined (see Diagnostics).
 - No shadowing: declaring a name that is already visible is a compile error.
 - `_` discards: an ignored return value (`q, _ := div_mod(17, 5);`), a catch-all `match` arm, an unused parameter, or an explicit `_ = save_game();` on a `#must_use` value.
@@ -222,7 +223,7 @@ s := sb.to_string();
 
 - No separate owned string type. UI and debug strings typically use the temp allocator and are freed at end of frame.
 - Backtick raw strings can span lines, which suits embedded GLSL and test data.
-- `cstring` (null-terminated) exists for C interop, with conversions both ways.
+- `cstring` (null-terminated) exists for C interop, with conversions both ways. Until `string` exists, a string literal is a `cstring`.
 
 ## Mutability and pointers
 
@@ -248,6 +249,27 @@ r      : mut *mut Enemy;  // both
 - C interop: `*T` maps to `const T*`, `*mut T` to `T*`.
 
 No arithmetic on `*T`: a pointer points at one thing, and slices handle walking through memory. Raw offsets use an explicit, greppable builtin: `next := ptr_add(p, 16);`. Pointers to pointers need no special rule (`*mut *mut Node`).
+
+## C interop
+
+C functions are declared in a `foreign` block that names the library to link. No C headers are read: the declarations are the contract, so they must match the C ones exactly.
+
+```
+foreign "raylib" {
+    InitWindow        :: fn(width, height: i32, title: cstring);
+    WindowShouldClose :: fn() -> bool;
+}
+
+foreign "SDL3" #link_prefix("SDL_") {
+    Init      :: fn(flags: u32) -> bool;     // links SDL_Init
+    GLGetProc :: fn(name: cstring) -> *mut u8 #link_name("SDL_GL_GetProcAddress");
+}
+```
+
+- The name before `::` is the Slick name. The C symbol is that name, or `#link_prefix` followed by it, or exactly the `#link_name`, which ignores any prefix.
+- Structs cross by value with C's layout, since a Slick struct is a plain C struct with the same fields in the same order. Bindings use sized types: C's `int` is `i32`, `float` is `f32`.
+- A foreign call looks like any other call. With PascalCase function names, most C libraries' names are already idiomatic.
+- Not yet supported: variadic C functions, null pointers, arrays, platform-specific libraries, callbacks, and calling Slick from C (see Open questions).
 
 ## Generics
 
@@ -461,7 +483,7 @@ Milestones:
 0. Minimal Turing-complete core, pushed through the whole pipeline (lex, parse, type-check, emit C, call `cc`): `i32` and `bool`; `:=` and `: mut` declarations with the immutability check; assignment and `+=`; arithmetic, comparison and logical operators; `if`/`else`, `while`; functions with parameters, `return` and recursion; a built-in `print(i32)`. Test program: recursive `fib` printed for 0 to 9.
 0.5. Diagnostics: Rust-style errors with source excerpts, labels, suggested fixes and color, in sentence case, with every error in a file reported in one run.
 1. Compile a wider subset to C: structs, pointers, the remaining integer and float types, `cast` and `bitcast`, bitwise operators, and the first warning (`--warn-implicit-conversions`, with `--warnings-as-errors`). `print` takes every number type and `bool`, showing floats as the shortest text that reads back exactly, with an optional number of decimal places: `print(x, 2)`.
-2. C interop: call raylib or SDL and get Pong drawing.
+2. C interop: `foreign` blocks, constants, `cstring` literals and linking, enough to call raylib and get Pong drawing (paddles and a ball; the score waits for a way to turn numbers into text).
 3. Signature features: generics, tagged unions, `Result` and `try`, allocator context.
 4. Attributes and the JSON reflection dump for the ECS bridge.
 5. The deep end: a real IR, `#run`, own codegen, self-hosting.
@@ -496,3 +518,12 @@ Milestones:
 - [x] Mixed-type arithmetic: decided, the narrower operand widens when lossless (see Primitive types).
 - [x] Integer to float conversion: decided, never implicit (see Primitive types).
 - [x] Warning flags: decided, `--warn-implicit-conversions` and `--warnings-as-errors` (see Primitive types).
+- [x] Constants: decided, one fixed type, inferred or written (see Declarations and syntax).
+- [x] Declaring C functions: decided, `foreign` blocks with `#link_prefix` and `#link_name` (see C interop).
+- [ ] Variadic C functions: probably a foreign-only `...` whose extra arguments get C's promotions. Needed for `printf` and raylib's `TextFormat`.
+- [ ] Slick variadics: typed `..T` as sugar for a slice, once slices exist. `format("HP: {}", hp)` needs mixed types: runtime type information (`any`) or compile-time specialization, decided with generics.
+- [ ] Null pointers from C: `?*T` covers it; needed for most C APIs beyond raylib's drawing calls.
+- [ ] Platform-specific libraries (`raylib.lib` on Windows, frameworks on macOS), probably through compile-time `when` once `#run` exists.
+- [ ] Callbacks into Slick, and exporting Slick functions to C (`#c_call`).
+- [ ] Generating bindings from C headers, to avoid hand-matching declarations.
+- [ ] Naming convention: the leaning is PascalCase for functions and types. Locals, fields and constants are undecided.
