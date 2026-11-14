@@ -278,7 +278,7 @@ Keywords from later milestones are reserved now.
   Error: Could not compile 'reserved.slick' due to 1 error
   [1]
 
-Only function and struct definitions are allowed at the top level for now.
+The top level holds functions, structs, constants and foreign blocks.
 
   $ cat > toplevel.slick <<'EOF'
   > x := 5;
@@ -291,25 +291,28 @@ Only function and struct definitions are allowed at the top level for now.
   1 | x := 5;
     |   ^^ Expected '::'
     |
-  Note: Only functions and structs can be defined at the top level for now
+  Note: Global variables are not supported yet. For a constant, write 'x :: ...;'
   
   Error: Could not compile 'toplevel.slick' due to 1 error
   [1]
 
-  $ cat > toplevel_const.slick <<'EOF'
-  > MAX :: 1024;
+A global variable is not supported yet; the error points to the constant
+form.
+
+  $ cat > toplevel_global.slick <<'EOF'
+  > count : i32 = 0;
   > main :: fn() { }
   > EOF
-  $ slick run toplevel_const.slick
-  Error: Expected 'fn' or 'struct', found '1024'
-   --> toplevel_const.slick:1:8
+  $ slick run toplevel_global.slick
+  Error: Expected ':', found '='
+   --> toplevel_global.slick:1:13
     |
-  1 | MAX :: 1024;
-    |        ^^^^ Expected 'fn' or 'struct'
+  1 | count : i32 = 0;
+    |             ^ Expected ':'
     |
-  Note: Only functions and structs can be defined at the top level for now
+  Note: Global variables are not supported yet. For a constant, write 'count : i32 : ...;'
   
-  Error: Could not compile 'toplevel_const.slick' due to 1 error
+  Error: Could not compile 'toplevel_global.slick' due to 1 error
   [1]
 
 A byte outside printable ASCII is reported by its value.
@@ -322,7 +325,7 @@ A byte outside printable ASCII is reported by its value.
   4 | é
     | ^
     |
-  Note: Only comments can contain characters outside ASCII
+  Note: Only comments and strings can contain characters outside ASCII
   
   Error: Could not compile 'byte.slick' due to 1 error
   [1]
@@ -333,13 +336,13 @@ Other parser errors use the form 'expected X, found Y'.
   > 5
   > EOF
   $ slick run top_number.slick
-  Error: Expected a function or struct definition, found '5'
+  Error: Expected a declaration, found '5'
    --> top_number.slick:1:1
     |
   1 | 5
-    | ^ Expected a function or struct definition
+    | ^ Expected a declaration
     |
-  Note: Only functions and structs can be defined at the top level for now
+  Note: The top level holds functions, structs, constants and foreign blocks
   
   Error: Could not compile 'top_number.slick' due to 1 error
   [1]

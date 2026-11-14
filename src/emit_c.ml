@@ -28,6 +28,7 @@ type emitter = {
   (* The runtime helpers the program uses, by name. *)
   mutable helpers : string list;
   structs : (string, struct_decl) Hashtbl.t;
+  funcs : (string, func) Hashtbl.t;
 }
 
 let sprintf = Printf.sprintf
@@ -98,6 +99,7 @@ let rec c_type t =
   | Ptr (true, t) -> c_type t ^ " *"
   | Ptr (false, t) -> c_type t ^ " const *"
   | Struct name -> c_struct_name name
+  | Cstring -> "const char *"
   | Err -> failwith "emit: error type"
 
 (* Field 'x' is 'f_x', which keeps it clear of C keywords and of macros
@@ -120,6 +122,7 @@ let rec c_zero em t =
   | Float_ty F64 -> "0.0"
   | Bool -> "false"
   | Ptr _ -> "0" (* never needed: a pointer must be given a value *)
+  | Cstring -> "\"\"" (* never needed, for the same reason *)
   | Struct name ->
       let sd = find_struct em name in
       "(" ^ c_type t ^ "){ " ^ zero_fields em sd.s_fields ^ " }"
@@ -134,6 +137,15 @@ and zero_field em (f : field) =
   "." ^ c_field f.fd_name ^ " = " ^ c_zero em f.fd_ty
 
 let c_func_name name = "slick_" ^ name
+
+(* A foreign function's C name. The linker sees its real symbol through an
+   assembler label (see [foreign_prelude]). *)
+let c_foreign_name name = "slickf_" ^ name
+
+let c_callee em name =
+  match Hashtbl.find_opt em.funcs name with
+  | Some { f_foreign = Some _; _ } -> c_foreign_name name
+  | _ -> c_func_name name
 
 let starts_with s prefix =
   String.length s >= String.length prefix
@@ -297,6 +309,8 @@ let helper_text name =
   | "print_bool" ->
       "static void slickrt_print_bool(bool v) { puts(v ? \"true\" : \
        \"false\"); }"
+  | "print_cstring" ->
+      "static void slickrt_print_cstring(const char *v) { puts(v); }"
   | "put_float" -> put_float_text
   | "print_f32" ->
       "static void slickrt_print_f32(float v) { slickrt_put_float(v, 9, 1); }"
@@ -318,7 +332,7 @@ let kind_helper prefix k = prefix ^ int_kind_name k
 
 (* Every helper, in the order they are written out. *)
 let helper_order =
-  [ "panic"; "print_bool" ]
+  [ "panic"; "print_bool"; "print_cstring" ]
   @ List.map (kind_helper "print_") all_int_kinds
   @ [ "put_float"; "print_f32"; "print_f64"; "print_fixed" ]
   @ List.map (kind_helper "div_") all_int_kinds
@@ -398,7 +412,8 @@ let rec has_effect e =
   | Unary (_, x) | Deref x | Addr_of (_, x) | Cast (_, _, x) -> has_effect x
   | Field fa -> has_effect fa.obj
   | Struct_lit sl -> List.exists item_has_effect sl.items
-  | Int _ | Float _ | Bool_lit _ | Var _ -> false
+  | Var { var_const = Some c; _ } -> has_effect c.c_value
+  | Int _ | Float _ | Bool_lit _ | String_lit _ | Var _ -> false
 
 and item_has_effect (i : lit_item) = has_effect i.i_value
 
@@ -499,7 +514,13 @@ and emit_raw em e =
       let suffix = if e.ty = Float_ty F32 then "f" else "" in
       signed_literal (sign ^ lit.text ^ suffix)
   | Bool_lit b -> literal (if b then "true" else "false")
+  | Var { var_const = Some c; _ } ->
+      (* A constant's checked value, emitted in place. Nothing can change
+         it. *)
+      let ce = emit_expr em c.c_value in
+      { code = operand ce; atomic = true; stable = true }
   | Var vr -> atom (c_local_name (sym_of vr))
+  | String_lit s -> literal (c_string_literal s)
   | Call call -> store em e.ty (emit_call em call)
   | Unary (Neg, x) -> narrow e.ty (compound ("-" ^ operand (emit_expr em x)))
   | Unary (Bnot, x) -> narrow e.ty (compound ("~" ^ operand (emit_expr em x)))
@@ -570,7 +591,7 @@ and emit_call em call =
   if call.callee = "print" then emit_print em call
   else
     let args = emit_values em call.args [] in
-    c_func_name call.callee ^ "(" ^ String.concat ", " args ^ ")"
+    c_callee em call.callee ^ "(" ^ String.concat ", " args ^ ")"
 
 and emit_print em call =
   let args = emit_values em call.args [] in
@@ -580,6 +601,7 @@ and emit_print em call =
         match x.ty with
         | Int_ty k -> "print_" ^ int_kind_name k
         | Float_ty k -> "print_" ^ float_kind_name k
+        | Cstring -> "print_cstring"
         | _ -> "print_bool"
       in
       need em name;
@@ -788,14 +810,39 @@ let signature f =
   in
   "static " ^ c_type f.ret_ty ^ " " ^ c_func_name f.f_name ^ "(" ^ params ^ ")"
 
-let emit_prototype em f = line em (signature f ^ ";")
+let emit_prototype em f = if f.f_foreign = None then line em (signature f ^ ";")
 
 let emit_func em f =
-  em.next_tmp <- f.nsyms + 1;
-  line em (signature f ^ " {");
-  emit_body em f.body;
-  line em "}";
-  line em ""
+  if f.f_foreign = None then begin
+    em.next_tmp <- f.nsyms + 1;
+    line em (signature f ^ " {");
+    emit_body em f.body;
+    line em "}";
+    line em ""
+  end
+
+(* Foreign functions are declared under their own C names, with an
+   assembler label giving the real symbol. So a binding to libc's 'abs' or
+   'puts' never clashes with the declaration in <stdlib.h> or <stdio.h>.
+   __USER_LABEL_PREFIX__ is '_' on macOS and empty on Linux; gcc and clang
+   both support labels. *)
+let foreign_prelude =
+  "#define SLICKRT_STR2(x) #x\n\
+   #define SLICKRT_STR(x) SLICKRT_STR2(x)\n\
+   #define SLICKRT_SYM(name) __asm__(SLICKRT_STR(__USER_LABEL_PREFIX__) name)\n"
+
+let foreign_declaration f =
+  match f.f_foreign with
+  | None -> None
+  | Some fi ->
+      let params =
+        if f.param_tys = [] then "void"
+        else String.concat ", " (List.map c_type f.param_tys)
+      in
+      Some
+        (sprintf "extern %s %s(%s) SLICKRT_SYM(%s);" (c_type f.ret_ty)
+           (c_foreign_name f.f_name) params
+           (c_string_literal fi.symbol))
 
 let field_line (f : field) =
   "    " ^ c_type f.fd_ty ^ " " ^ c_field f.fd_name ^ ";\n"
@@ -838,6 +885,7 @@ let register_struct em (sd : struct_decl) =
   Hashtbl.replace em.structs sd.s_name sd
 
 let is_used em name = List.mem name em.helpers
+let register_func em (f : func) = Hashtbl.replace em.funcs f.f_name f
 
 let typedef (sd : struct_decl) =
   let name = c_struct_name sd.s_name in
@@ -858,9 +906,11 @@ let emit_file (file : file) =
       next_site = 1;
       helpers = [];
       structs = Hashtbl.create 16;
+      funcs = Hashtbl.create 16;
     }
   in
   List.iter (register_struct em) file.structs;
+  List.iter (register_func em) file.funcs;
   List.iter (emit_prototype em) file.funcs;
   line em "";
   List.iter (emit_func em) file.funcs;
@@ -879,7 +929,11 @@ let emit_file (file : file) =
     if ordered = [] then ""
     else String.concat "\n" (List.map struct_definition ordered) ^ "\n"
   in
+  let foreign = List.filter_map foreign_declaration file.funcs in
+  let foreign_block =
+    if foreign = [] then "" else foreign_prelude ^ "\n" ^ block foreign
+  in
   String.concat "\n" includes
-  ^ "\n\n" ^ helper_block ^ block typedefs ^ definitions
+  ^ "\n\n" ^ helper_block ^ block typedefs ^ definitions ^ foreign_block
   ^ block (List.rev em.sites)
   ^ Buffer.contents em.out

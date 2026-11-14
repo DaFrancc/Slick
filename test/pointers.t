@@ -282,7 +282,7 @@ A pointer can never be null, so a pointer variable needs a value.
   3 |     p : *void = &x;
     |          ^^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Unknown type 'Foo'
    --> bad_types.slick:4:14
@@ -290,7 +290,7 @@ A pointer can never be null, so a pointer variable needs a value.
   4 |     q : *mut Foo = &x;
     |              ^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Could not compile 'bad_types.slick' due to 2 errors
   [1]

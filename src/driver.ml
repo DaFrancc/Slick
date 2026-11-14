@@ -64,7 +64,7 @@ let compile_to_c path =
   Check.check_file file;
   Report.stop_if_errors ();
   Report.print_warnings ();
-  Emit_c.emit_file file
+  (Emit_c.emit_file file, Ast.libraries file)
 
 let env_or name default =
   match Sys.getenv_opt name with Some v when v <> "" -> v | _ -> default
@@ -81,27 +81,59 @@ let write_file path contents =
   output_string oc contents;
   close_out oc
 
-let compile_c c_src out =
+let cli_help msg =
+  let color = use_color settings.color in
+  prerr_string (Render.paint color Render.bold_cyan "Help" ^ ": " ^ msg ^ "\n")
+
+(* The library names from foreign blocks as linker flags. "" links
+   nothing: the functions are in the C library, which is always linked. *)
+let is_library lib = lib <> ""
+let lib_flag lib = if lib = "" then None else Some (Filename.quote ("-l" ^ lib))
+let lib_flags libs = String.concat " " (List.filter_map lib_flag libs)
+
+(* Compiles C source to an executable at [out], in two steps. A failure to
+   compile is a bug in slick, so the C file is kept for inspection. A failure
+   to link is usually a missing library, so it is reported as the user's
+   error. *)
+let compile_c path c_src libs out =
   let c_path = Filename.temp_file "slick" ".c" in
+  let o_path = Filename.temp_file "slick" ".o" in
   write_file c_path c_src;
   let cc = env_or "CC" "cc" in
   let flags = env_or "SLICK_CFLAGS" "" in
-  let cmd =
-    Printf.sprintf "%s %s %s -o %s %s" cc base_cflags flags (Filename.quote out)
-      (Filename.quote c_path)
+  let compile =
+    Printf.sprintf "%s %s %s -c -o %s %s" cc base_cflags flags
+      (Filename.quote o_path) (Filename.quote c_path)
   in
-  if Sys.command cmd <> 0 then begin
+  if Sys.command compile <> 0 then begin
     cli_error
       "Internal compiler error: the C compiler rejected the generated code";
     cli_note ("The generated C was kept at " ^ c_path);
     cli_note "This is a bug in slick";
     exit 3
   end;
-  Sys.remove c_path
+  Sys.remove c_path;
+  let link =
+    Printf.sprintf "%s -o %s %s %s %s" cc (Filename.quote out)
+      (Filename.quote o_path) (lib_flags libs)
+      (env_or "SLICK_LDFLAGS" "")
+  in
+  let linked = Sys.command link = 0 in
+  Sys.remove o_path;
+  if not linked then begin
+    cli_error (Printf.sprintf "Could not link '%s'" path);
+    let shown = List.filter is_library libs in
+    if shown <> [] then
+      cli_note ("It links with: -l" ^ String.concat " -l" shown);
+    cli_help
+      "Check that these libraries are installed, or add a search path with \
+       SLICK_LDFLAGS=\"-L<dir>\"";
+    exit 1
+  end
 
 let build path output emit_c =
   check_input path;
-  let c_src = compile_to_c path in
+  let c_src, libs = compile_to_c path in
   if emit_c then print_string c_src
   else
     let out =
@@ -109,13 +141,13 @@ let build path output emit_c =
       | Some out -> out
       | None -> Filename.remove_extension (Filename.basename path)
     in
-    compile_c c_src out
+    compile_c path c_src libs out
 
 let run path =
   check_input path;
-  let c_src = compile_to_c path in
+  let c_src, libs = compile_to_c path in
   let exe = Filename.temp_file "slick" ".exe" in
-  compile_c c_src exe;
+  compile_c path c_src libs exe;
   flush stdout;
   let code = Sys.command (Filename.quote exe) in
   Sys.remove exe;

@@ -98,6 +98,7 @@ let keyword_kind word =
   | "true" -> Some True
   | "false" -> Some False
   | "struct" -> Some Struct
+  | "foreign" -> Some Foreign
   | _ -> None
 
 let lex_word lx =
@@ -309,9 +310,186 @@ let unexpected_char lx start c =
     else
       Diag.with_note
         (Diag.error span (Printf.sprintf "Unexpected byte 0x%02X" code) "")
-        "Only comments can contain characters outside ASCII"
+        "Only comments and strings can contain characters outside ASCII"
   in
   Report.report d
+
+(* ---- Strings ---- *)
+
+let escape_note =
+  "The escapes are \\n \\t \\r \\\\ \\\" \\' \\0 \\xHH and \\u{...}"
+
+(* Appends code point [cp] to [b] as UTF-8. *)
+let add_utf8 b cp =
+  let byte n = Buffer.add_char b (Char.chr n) in
+  if cp < 0x80 then byte cp
+  else if cp < 0x800 then begin
+    byte (0xC0 lor (cp lsr 6));
+    byte (0x80 lor (cp land 0x3F))
+  end
+  else if cp < 0x10000 then begin
+    byte (0xE0 lor (cp lsr 12));
+    byte (0x80 lor ((cp lsr 6) land 0x3F));
+    byte (0x80 lor (cp land 0x3F))
+  end
+  else begin
+    byte (0xF0 lor (cp lsr 18));
+    byte (0x80 lor ((cp lsr 12) land 0x3F));
+    byte (0x80 lor ((cp lsr 6) land 0x3F));
+    byte (0x80 lor (cp land 0x3F))
+  end
+
+let is_hex c = digit_value c < 16
+
+let zero_byte lx start =
+  Report.report
+    (Diag.with_note
+       (Diag.error (since lx start) "A cstring cannot contain a zero byte" "")
+       "C would treat it as the end of the string")
+
+(* After a '\x': exactly two hex digits. *)
+let lex_hex_escape lx b start =
+  if is_hex (peek_at lx 0) && is_hex (peek_at lx 1) then begin
+    let v = (digit_value (peek_at lx 0) * 16) + digit_value (peek_at lx 1) in
+    advance lx;
+    advance lx;
+    if v = 0 then zero_byte lx start else Buffer.add_char b (Char.chr v)
+  end
+  else
+    Report.report
+      (Diag.error (since lx start) "Invalid escape: '\\x' needs two hex digits"
+         "")
+
+(* After a '\u': '{', one to six hex digits, '}', naming a code point. *)
+let lex_unicode_escape lx b start =
+  if peek_at lx 0 <> '{' then
+    Report.report
+      (Diag.error (since lx start) "Invalid escape: write '\\u{...}'" "")
+  else begin
+    advance lx;
+    let v = ref 0 in
+    let n = ref 0 in
+    while is_hex (peek_at lx 0) && !n < 7 do
+      v := (!v * 16) + digit_value (peek_at lx 0);
+      incr n;
+      advance lx
+    done;
+    let closed = peek_at lx 0 = '}' in
+    if closed then advance lx;
+    if (not closed) || !n = 0 || !n > 6 then
+      Report.report
+        (Diag.error (since lx start)
+           "Invalid escape: '\\u{...}' needs one to six hex digits" "")
+    else if !v > 0x10FFFF || (!v >= 0xD800 && !v <= 0xDFFF) then
+      Report.report
+        (Diag.error (since lx start)
+           (Printf.sprintf "'\\u{%X}' is not a Unicode code point" !v)
+           "")
+    else if !v = 0 then zero_byte lx start
+    else add_utf8 b !v
+  end
+
+let add_escaped lx b ch =
+  advance lx;
+  Buffer.add_char b ch
+
+(* After a '\', which is at byte [bs] and column span [start]. *)
+let lex_escape lx b bs start =
+  match peek_at lx 0 with
+  | 'n' -> add_escaped lx b '\n'
+  | 't' -> add_escaped lx b '\t'
+  | 'r' -> add_escaped lx b '\r'
+  | '\\' -> add_escaped lx b '\\'
+  | '"' -> add_escaped lx b '"'
+  | '\'' -> add_escaped lx b '\''
+  | '0' ->
+      advance lx;
+      zero_byte lx start
+  | 'x' ->
+      advance lx;
+      lex_hex_escape lx b start
+  | 'u' ->
+      advance lx;
+      lex_unicode_escape lx b start
+  | '\n' | '\000' -> () (* the line ends: the string is unterminated *)
+  | _ ->
+      advance lx;
+      while (not (at_end lx)) && is_continuation (peek_at lx 0) do
+        advance lx
+      done;
+      Report.report
+        (Diag.with_note
+           (Diag.error (since lx start)
+              (Printf.sprintf "Unknown escape '%s'"
+                 (String.sub lx.src bs (lx.pos - bs)))
+              "")
+           escape_note)
+
+(* A string literal, from its opening '"'. A string cannot span lines: one
+   with no closing '"' on its line is reported and ends there. *)
+let lex_string lx =
+  let start_pos = lx.pos in
+  let start = here lx in
+  advance lx;
+  let b = Buffer.create 16 in
+  let closed = ref false in
+  let stop = ref false in
+  while not !stop do
+    if at_end lx || peek_at lx 0 = '\n' then stop := true
+    else
+      match peek_at lx 0 with
+      | '"' ->
+          advance lx;
+          closed := true;
+          stop := true
+      | '\\' ->
+          let bs = lx.pos in
+          let esc_start = here lx in
+          advance lx;
+          lex_escape lx b bs esc_start
+      | c ->
+          Buffer.add_char b c;
+          advance lx
+  done;
+  if not !closed then begin
+    (* The missing quote most likely belongs before any ')', ';' or ',' that
+       ended the line, as when the closing quote of a call's argument is
+       forgotten. *)
+    let k = ref 0 in
+    while
+      !k < lx.pos - start_pos - 1
+      && String.contains ");, \t" lx.src.[lx.pos - 1 - !k]
+    do
+      incr k
+    done;
+    let whole = since lx start in
+    let at =
+      {
+        whole with
+        start_line = whole.end_line;
+        start_col = whole.end_col - !k;
+        end_col = whole.end_col - !k;
+      }
+    in
+    Report.report
+      (Diag.with_help
+         (Diag.error whole "Unterminated string literal" "Needs a closing '\"'")
+         "Close it"
+         [ Diag.edit at "\"" ])
+  end;
+  push lx (String (Buffer.contents b)) start_pos start
+
+(* '#name'. A '#' with no name after it is an unexpected character. *)
+let lex_directive lx =
+  let start_pos = lx.pos in
+  let start = here lx in
+  if is_ident_start (peek_at lx 1) then begin
+    advance lx;
+    skip_while lx is_ident_char;
+    let name = String.sub lx.src (start_pos + 1) (lx.pos - start_pos - 1) in
+    push lx (Directive name) start_pos start
+  end
+  else unexpected_char lx start '#'
 
 (* Consumes an [n]-character operator and pushes its token. *)
 let take lx n kind =
@@ -341,6 +519,8 @@ let rec lex_all lx =
     let c = peek_at lx 0 in
     if is_ident_start c then lex_word lx
     else if is_digit c then lex_number lx
+    else if c = '"' then lex_string lx
+    else if c = '#' then lex_directive lx
     else lex_punct lx;
     lex_all lx
   end

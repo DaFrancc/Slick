@@ -13,11 +13,15 @@ main.slick → lex → parse → check → emit C → cc → ./main
 
 ## Status
 
-Milestones 0, 0.5 and 1 are done:
+Milestones 0, 0.5, 1 and 2 are done:
 
-- **Types:** `i8` to `i64`, `u8` to `u64`, `f32`, `f64` and `bool`. Literals
-  take their type from context, narrower values widen implicitly when nothing
-  can be lost, and `cast(T, x)` and `bitcast(T, x)` do the rest.
+- **Types:** `i8` to `i64`, `u8` to `u64`, `f32`, `f64`, `bool` and
+  `cstring`. Literals take their type from context, narrower values widen
+  implicitly when nothing can be lost, and `cast(T, x)` and `bitcast(T, x)`
+  do the rest.
+- **Constants:** `MAX :: 1024;` or `SPEED : f32 : 400;`, at the top level.
+- **C interop:** `foreign "raylib" { ... }` declares C functions and links
+  their library. See `examples/pong.slick`.
 - **Structs:** declared at the top level, built with named, positional or
   `.{ }` literals, and passed and returned by value.
 - **Pointers:** `*T` and `*mut T`, `&x` and `&mut x`, and `*p`. Field access
@@ -28,7 +32,8 @@ Milestones 0, 0.5 and 1 are done:
 - **Statements:** local declarations with `mut`, assignment and compound
   assignment, `if`/`else`, `while`, and functions with parameters, `return`
   and recursion.
-- **Output:** a built-in `print` for every number type and `bool`. Floats
+- **Output:** a built-in `print` for every number type, `bool` and
+  `cstring`. Floats
   print as the shortest text that reads back exactly, and `print(x, 2)` prints
   two digits after the point.
 - **Diagnostics:** Rust-style error messages, and an opt-in warning for
@@ -56,6 +61,31 @@ See `examples/` for more.
 
 - OCaml 5.x and dune 3.16 or newer
 - A C11 compiler on `PATH` as `cc` (gcc and clang are both tested)
+- For `examples/pong.slick` only: raylib (on Fedora, `sudo dnf install
+  raylib-devel`). The tests do not need it.
+
+## Calling C
+
+C functions are declared in a `foreign` block that names their library.
+slick reads no C headers, so the declarations must match the C ones: C's
+`int` is `i32`, `float` is `f32`, and structs need the same fields in the same
+order.
+
+```
+Color :: struct { r, g, b, a: u8 }
+
+foreign "raylib" {
+    InitWindow      :: fn(width, height: i32, title: cstring);
+    ClearBackground :: fn(color: Color);
+}
+
+foreign "m" { Sqrt :: fn(x: f64) -> f64 #link_name("sqrt"); }
+```
+
+The name before `::` is the Slick name. `#link_name("...")` gives a
+different C symbol, and `#link_prefix("SDL_")` on a block puts a prefix in
+front of every name in it. Variadic C functions, null pointers and callbacks
+are not supported yet.
 
 ## Build, test, run
 
@@ -96,6 +126,8 @@ Environment variables:
 - `SLICK_CFLAGS`: extra flags for the C compiler. The tests use
   `-Wall -Wextra -Werror -Wno-unused -Wno-tautological-compare` to check that
   the generated C is warning-free.
+- `SLICK_LDFLAGS`: extra flags for linking, such as `-L<dir>` for a library
+  that is not installed system-wide.
 - `NO_COLOR`: when set to anything, turns color off unless `--color` says
   otherwise.
 
@@ -124,8 +156,9 @@ Error: Could not compile 'game.slick' due to 1 error
 A runtime panic, such as dividing by zero, shows the line it happened on in
 the same way.
 
-Exit codes: 0 success, 1 compile error (or a runtime panic under `run`), 2
-usage error, 3 if the C compiler rejects the generated code. Exit code 3 is
+Exit codes: 0 success, 1 compile error, link error (usually a missing
+library) or a runtime panic under `run`, 2 usage error, 3 if the C compiler
+rejects the generated code. Exit code 3 is
 always a bug in slick, and the C file is kept so it can be inspected.
 
 ## Layout

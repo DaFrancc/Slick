@@ -512,7 +512,7 @@ pointers cannot be zero. So is comparing structs with '=='.
     |
   Note: Compare their fields one by one
   
-  Error: 'print' takes a number or a bool
+  Error: 'print' takes a number, a bool or a cstring
    --> misc_errors.slick:9:11
     |
   9 |     print(a);

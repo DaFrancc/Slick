@@ -690,7 +690,7 @@ Unknown parameter and return types.
   1 | f :: fn(n: Foo) { }
     |            ^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Could not compile 'param_type.slick' due to 1 error
   [1]
@@ -706,7 +706,7 @@ Unknown parameter and return types.
   1 | f :: fn() -> Bar { }
     |              ^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Could not compile 'ret_type.slick' due to 1 error
   [1]

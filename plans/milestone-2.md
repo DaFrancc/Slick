@@ -93,7 +93,8 @@ only when raylib is found (section 8).
   addresses) and no indexing. `print(s)` prints it.
 - **D8. The library name is passed as `-l<name>`.** Each library is linked
   once, in the order first seen. `SLICK_LDFLAGS` adds flags to the link
-  step, such as `-L` paths.
+  step, such as `-L` paths. An empty name, `foreign "" { ... }`, links
+  nothing extra, for functions in the C library.
 - **D9. Foreign functions are declared under a mangled C name** with an
   assembler label naming the real symbol (section 4.4). This keeps them
   clear of anything the runtime's headers declare: binding libc's `abs` or
@@ -314,7 +315,7 @@ type names in notes and suggestions.
 | Unknown attribute | `Unknown attribute '#link_nme'` | On it | Did you mean, among the attributes valid there |
 | Misplaced attribute | `'#link_prefix' goes on a foreign block, not a function` | On it | |
 | Attribute argument | `'#link_name' expects a string, like #link_name("SDL_Init")` | On the argument | |
-| `mut` on a foreign parameter | `Parameters of a foreign function cannot be 'mut'` | On `mut` | Deletion help |
+| `mut` on a foreign parameter | `Parameters of a foreign function cannot be 'mut'` | On the parameter's name: `Declared 'mut'` | |
 | Foreign `main` | `'main' cannot be a foreign function` | On the name | |
 | Unsupported type | `Type '...' cannot cross into C` | On the type | Only if any appear; all M2 types can |
 | Constant cycle | `Constant 'A' depends on itself` | On the first use in the cycle | Secondary labels along the path |

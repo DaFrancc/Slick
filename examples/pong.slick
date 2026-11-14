@@ -1,0 +1,127 @@
+// Pong, drawn with raylib. W and S move the left paddle, Up and Down the
+// right one. Needs raylib installed: slick run examples/pong.slick
+
+// ---- raylib bindings ----
+
+Color     :: struct { r, g, b, a: u8 }
+Vector2   :: struct { x, y: f32 }
+Rectangle :: struct { x, y, width, height: f32 }
+
+foreign "raylib" {
+    InitWindow        :: fn(width, height: i32, title: cstring);
+    CloseWindow       :: fn();
+    WindowShouldClose :: fn() -> bool;
+    SetTargetFPS      :: fn(fps: i32);
+    GetFrameTime      :: fn() -> f32;
+
+    BeginDrawing      :: fn();
+    EndDrawing        :: fn();
+    ClearBackground   :: fn(color: Color);
+    DrawRectangleRec  :: fn(rec: Rectangle, color: Color);
+    DrawCircleV       :: fn(center: Vector2, radius: f32, color: Color);
+    DrawLine          :: fn(start_x, start_y, end_x, end_y: i32, color: Color);
+    DrawText          :: fn(text: cstring, x, y, size: i32, color: Color);
+
+    IsKeyDown         :: fn(key: i32) -> bool;
+    CheckCollisionCircleRec :: fn(center: Vector2, radius: f32, rec: Rectangle) -> bool;
+    GetRandomValue    :: fn(min, max: i32) -> i32;
+}
+
+KEY_W    :: 87;
+KEY_S    :: 83;
+KEY_UP   :: 265;
+KEY_DOWN :: 264;
+
+BLACK    :: Color{ 0, 0, 0, 255 };
+RAYWHITE :: Color{ 245, 245, 245, 255 };
+DARKGRAY :: Color{ 80, 80, 80, 255 };
+
+// ---- the game ----
+
+SCREEN_W     : f32 : 800;
+SCREEN_H     : f32 : 450;
+PADDLE_W     : f32 : 10;
+PADDLE_H     : f32 : 90;
+PADDLE_SPEED : f32 : 400;
+BALL_RADIUS  : f32 : 8;
+BALL_SPEED   : f32 : 300;
+SPEEDUP      : f32 : 1.05;
+
+Paddle :: struct { rect: Rectangle, up, down: i32 }
+Ball   :: struct { pos, vel: Vector2 }
+
+MovePaddle :: fn(p: *mut Paddle, dt: f32) {
+    if IsKeyDown(p.up)   { p.rect.y -= PADDLE_SPEED * dt; }
+    if IsKeyDown(p.down) { p.rect.y += PADDLE_SPEED * dt; }
+    if p.rect.y < 0 { p.rect.y = 0; }
+    if p.rect.y > SCREEN_H - PADDLE_H { p.rect.y = SCREEN_H - PADDLE_H; }
+}
+
+// Puts the ball in the middle, heading toward one side at a random angle.
+ResetBall :: fn(b: *mut Ball, toward_left: bool) {
+    b.pos = .{ SCREEN_W / 2, SCREEN_H / 2 };
+    speed : mut = BALL_SPEED;
+    if toward_left { speed = -speed; }
+    b.vel = .{ speed, cast(f32, GetRandomValue(-200, 200)) };
+}
+
+// Moves the ball, bouncing it off the walls and the paddles, and speeding it
+// up a little on each hit. Returns false once it has left the screen.
+UpdateBall :: fn(b: *mut Ball, left, right: *Paddle, dt: f32) -> bool {
+    b.pos.x += b.vel.x * dt;
+    b.pos.y += b.vel.y * dt;
+
+    if b.pos.y < BALL_RADIUS && b.vel.y < 0 { b.vel.y = -b.vel.y; }
+    if b.pos.y > SCREEN_H - BALL_RADIUS && b.vel.y > 0 { b.vel.y = -b.vel.y; }
+
+    if b.vel.x < 0 && CheckCollisionCircleRec(b.pos, BALL_RADIUS, left.rect) {
+        b.vel.x = -b.vel.x * SPEEDUP;
+    }
+    if b.vel.x > 0 && CheckCollisionCircleRec(b.pos, BALL_RADIUS, right.rect) {
+        b.vel.x = -b.vel.x * SPEEDUP;
+    }
+
+    return b.pos.x > -BALL_RADIUS && b.pos.x < SCREEN_W + BALL_RADIUS;
+}
+
+main :: fn() {
+    InitWindow(cast(i32, SCREEN_W), cast(i32, SCREEN_H), "Pong");
+    SetTargetFPS(60);
+
+    top := (SCREEN_H - PADDLE_H) / 2;
+    left : mut = Paddle{
+        rect = .{ 20, top, PADDLE_W, PADDLE_H },
+        up = KEY_W,
+        down = KEY_S,
+    };
+    right : mut = Paddle{
+        rect = .{ SCREEN_W - 20 - PADDLE_W, top, PADDLE_W, PADDLE_H },
+        up = KEY_UP,
+        down = KEY_DOWN,
+    };
+    ball : mut Ball;
+    ResetBall(&mut ball, true);
+    serve_left : mut = false;
+
+    while !WindowShouldClose() {
+        dt := GetFrameTime();
+        MovePaddle(&mut left, dt);
+        MovePaddle(&mut right, dt);
+        if !UpdateBall(&mut ball, &left, &right, dt) {
+            ResetBall(&mut ball, serve_left);
+            serve_left = !serve_left;
+        }
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        middle := cast(i32, SCREEN_W / 2);
+        DrawLine(middle, 0, middle, cast(i32, SCREEN_H), DARKGRAY);
+        DrawRectangleRec(left.rect, RAYWHITE);
+        DrawRectangleRec(right.rect, RAYWHITE);
+        DrawCircleV(ball.pos, BALL_RADIUS, RAYWHITE);
+        DrawText("W / S", 20, 10, 20, DARKGRAY);
+        DrawText("Up / Down", cast(i32, SCREEN_W) - 120, 10, 20, DARKGRAY);
+        EndDrawing();
+    }
+    CloseWindow();
+}

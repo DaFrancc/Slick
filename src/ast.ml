@@ -17,6 +17,7 @@ type ty =
   | Void
   | Ptr of bool * ty (* whether the pointee is mutable, and its type *)
   | Struct of string
+  | Cstring (* a pointer to null-terminated, read-only bytes *)
   | Err
 
 let all_int_kinds = [ I8; I16; I32; I64; U8; U16; U32; U64 ]
@@ -53,6 +54,7 @@ let rec ty_name t =
   | Ptr (true, t) -> "*mut " ^ ty_name t
   | Ptr (false, t) -> "*" ^ ty_name t
   | Struct name -> name
+  | Cstring -> "cstring"
   | Err -> "<error>"
 
 let i32 = Int_ty I32
@@ -152,8 +154,29 @@ and expr_kind =
   | Addr_of of bool * expr (* whether it is '&mut' *)
   | Cast of cast_kind * type_ann * expr
   | Struct_lit of struct_lit
+  | String_lit of string (* the bytes, escapes decoded *)
 
-and var_ref = { var_name : string; mutable var_sym : symbol option }
+(* A name resolves to a local ([var_sym]) or a constant ([var_const]). *)
+and var_ref = {
+  var_name : string;
+  mutable var_sym : symbol option;
+  mutable var_const : const_decl option;
+}
+
+(* A top-level constant. Its value is checked once, on first use or in a
+   pass after the structs, and every use has its type. *)
+and const_decl = {
+  c_name : string;
+  c_name_span : Diag.span;
+  c_ann : type_ann option;
+  c_value : expr;
+  mutable c_ty : ty;
+  mutable c_state : const_state;
+}
+
+(* [Checking] marks a constant whose value is being checked, so reaching it
+   again is a cycle. [Broken] means its error has been reported. *)
+and const_state = Unchecked | Checking | Checked | Broken
 
 and call = {
   callee : string;
@@ -223,6 +246,10 @@ type param = {
   mutable p_sym : symbol option;
 }
 
+(* Where a foreign function's code is: the library to link, and the C
+   symbol after renaming. *)
+type foreign_info = { lib : string; symbol : string }
+
 type func = {
   f_name : string;
   f_name_span : Diag.span;
@@ -232,7 +259,10 @@ type func = {
   body : block;
   mutable param_tys : ty list;
   mutable ret_ty : ty;
-  mutable nsyms : int; (* symbols made for this function; temporaries follow *)
+  mutable nsyms : int;
+  f_foreign : foreign_info option;
+      (* a C function, with an empty body *)
+      (* symbols made for this function; temporaries follow *)
 }
 
 type field = {
@@ -249,4 +279,21 @@ type struct_decl = {
 }
 
 (* Each list is in source order. *)
-type file = { path : string; structs : struct_decl list; funcs : func list }
+type file = {
+  path : string;
+  structs : struct_decl list;
+  consts : const_decl list;
+  funcs : func list;
+}
+
+(* The libraries the program's foreign functions come from, each once, in
+   the order first seen. *)
+let libraries (file : file) =
+  let rec collect (funcs : func list) acc =
+    match funcs with
+    | [] -> List.rev acc
+    | { f_foreign = Some fi; _ } :: rest when not (List.mem fi.lib acc) ->
+        collect rest (fi.lib :: acc)
+    | _ :: rest -> collect rest acc
+  in
+  collect file.funcs []

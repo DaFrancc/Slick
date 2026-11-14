@@ -14,6 +14,7 @@ type checker = {
   file : string;
   funcs : (string, func) Hashtbl.t;
   structs : (string, struct_decl) Hashtbl.t;
+  consts : (string, const_decl) Hashtbl.t;
   (* Every parameter and local visible at this point. With no shadowing, one
      table is enough: a name is in it at most once. *)
   locals : (string, symbol) Hashtbl.t;
@@ -278,10 +279,24 @@ let builtin_type name =
   | "f32" -> Some (Float_ty F32)
   | "f64" -> Some (Float_ty F64)
   | "bool" -> Some Bool
+  | "cstring" -> Some Cstring
   | _ -> None
 
 let builtin_type_names =
-  [ "i8"; "i16"; "i32"; "i64"; "u8"; "u16"; "u32"; "u64"; "f32"; "f64"; "bool" ]
+  [
+    "i8";
+    "i16";
+    "i32";
+    "i64";
+    "u8";
+    "u16";
+    "u32";
+    "u64";
+    "f32";
+    "f64";
+    "bool";
+    "cstring";
+  ]
 
 let is_function c name =
   List.mem name builtin_functions || Hashtbl.mem c.funcs name
@@ -292,6 +307,7 @@ type taken =
   | Builtin_function
   | Builtin_type
   | Struct_name of struct_decl
+  | Const_name of const_decl
   | Func_name of func
 
 let global_meaning c name =
@@ -301,9 +317,12 @@ let global_meaning c name =
     match Hashtbl.find_opt c.structs name with
     | Some sd -> Struct_name sd
     | None -> (
-        match Hashtbl.find_opt c.funcs name with
-        | Some f -> Func_name f
-        | None -> Free)
+        match Hashtbl.find_opt c.consts name with
+        | Some cd -> Const_name cd
+        | None -> (
+            match Hashtbl.find_opt c.funcs name with
+            | Some f -> Func_name f
+            | None -> Free))
 
 let choose_different d = Diag.with_help d "Choose a different name" []
 
@@ -332,6 +351,15 @@ let check_global_free c name span =
           "Declared again here"
       in
       let d = Diag.with_label d sd.s_name_span "Struct defined here" in
+      Report.report (choose_different (Diag.with_note d no_shadowing_note));
+      false
+  | Const_name cd ->
+      let d =
+        Diag.error span
+          (sprintf "'%s' is already declared as a constant" name)
+          "Declared again here"
+      in
+      let d = Diag.with_label d cd.c_name_span "Constant defined here" in
       Report.report (choose_different (Diag.with_note d no_shadowing_note));
       false
   | Func_name f ->
@@ -413,7 +441,7 @@ let rec field_names (fields : field list) =
    which are reported separately. *)
 let rec pointer_path c t visited =
   match t with
-  | Ptr _ -> Some []
+  | Ptr _ | Cstring -> Some []
   | Struct name when not (List.mem name visited) -> (
       match Hashtbl.find_opt c.structs name with
       | Some sd -> fields_pointer_path c sd.s_fields (name :: visited)
@@ -430,6 +458,7 @@ and fields_pointer_path c fields visited =
 
 let pointer_note t path =
   match path with
+  | [] when t = Cstring -> "A cstring points to text, so it cannot be zero"
   | [] ->
       sprintf "Its type %s is a pointer, and pointers cannot be zero"
         (ty_name t)
@@ -554,6 +583,9 @@ let declare_func c f =
          (Diag.error span "'main' must take no parameters and return nothing" "")
          "Write it as 'main :: fn() { ... }'" [])
   end;
+  if f.f_name = "main" && f.f_foreign <> None then
+    Report.report
+      (Diag.error f.f_name_span "'main' cannot be a foreign function" "");
   match global_meaning c f.f_name with
   | Func_name prev ->
       Report.report
@@ -701,6 +733,7 @@ let check_var c (e : expr) vr =
                (sprintf "'%s' is a type, not a value" vr.var_name)
                "");
           Err
+      | Const_name _ -> failwith "check_var: constants go through check_name"
       | Free -> undeclared c e.span vr.var_name)
 
 (* An operator applied to operands of the wrong types: the operator is the
@@ -747,6 +780,7 @@ type place =
   | Mutable_place
   | Immutable_var of symbol
   | Readonly_ptr of expr (* reached through this pointer to read-only data *)
+  | Constant_place of const_decl (* a constant, or a field of one *)
 
 let ptr_place (p : expr) =
   match p.ty with
@@ -759,9 +793,10 @@ let ptr_place (p : expr) =
 let rec place_of e =
   match e.kind with
   | Var vr -> (
-      match vr.var_sym with
-      | Some sym -> if sym.sym_mut then Mutable_place else Immutable_var sym
-      | None -> Mutable_place)
+      match (vr.var_sym, vr.var_const) with
+      | Some sym, _ -> if sym.sym_mut then Mutable_place else Immutable_var sym
+      | None, Some cd -> Constant_place cd
+      | None, None -> Mutable_place)
   | Field fa -> if fa.through_ptr then ptr_place fa.obj else place_of fa.obj
   | Deref p -> ptr_place p
   | _ -> if e.ty = Err then Mutable_place else Not_place
@@ -823,6 +858,19 @@ let report_assign_place (target : expr) place =
                  (quoted_source p.span) (pointee_name p))
               "Cannot assign")
            p)
+  | Constant_place cd ->
+      let msg =
+        match target.kind with
+        | Var _ -> sprintf "Cannot assign to constant '%s'" cd.c_name
+        | _ ->
+            sprintf "Cannot assign to '%s': '%s' is a constant"
+              (quoted_source target.span)
+              cd.c_name
+      in
+      Report.report
+        (Diag.with_label
+           (Diag.error target.span msg "Cannot assign")
+           cd.c_name_span "Constant defined here")
 
 let report_addr_place (e : expr) (x : expr) is_mut place =
   match place with
@@ -859,7 +907,45 @@ let report_addr_place (e : expr) (x : expr) is_mut place =
                  (quoted_source p.span) (pointee_name p))
               "Needs a '*mut'")
            p)
+  | Constant_place cd ->
+      Report.report
+        (Diag.with_help
+           (Diag.with_label
+              (Diag.error x.span
+                 (sprintf "Cannot take the address of constant '%s'" cd.c_name)
+                 "A constant is not stored anywhere")
+              cd.c_name_span "Constant defined here")
+           "Store it in a variable first" [])
   | Immutable_var _ | Readonly_ptr _ -> ()
+
+(* Whether [e] can be computed at compile time, as a constant's value must
+   be. Each part that cannot is reported. *)
+let not_constant (e : expr) what =
+  Report.report
+    (Diag.error e.span "A constant's value must be known at compile time" what);
+  false
+
+let rec constant_expr (e : expr) =
+  match e.kind with
+  | Int _ | Float _ | Bool_lit _ | String_lit _ | Var _ -> true
+  | Unary (_, x) | Cast (_, _, x) -> constant_expr x
+  | Field fa -> constant_expr fa.obj
+  | Binary b ->
+      let l = constant_expr b.lhs in
+      let r = constant_expr b.rhs in
+      l && r
+  | Struct_lit sl -> constant_items sl.items
+  | Call _ -> not_constant e "This is a function call"
+  | Deref _ -> not_constant e "This reads through a pointer"
+  | Addr_of _ -> not_constant e "This takes an address"
+
+and constant_items (items : lit_item list) =
+  match items with
+  | [] -> true
+  | item :: rest ->
+      let first = constant_expr item.i_value in
+      let others = constant_items rest in
+      first && others
 
 (* ---- Expressions ---- *)
 
@@ -886,7 +972,7 @@ let rec check_expr c e expected =
     | Float lit -> check_float_lit e lit expected
     | Bool_lit _ -> Bool
     | Call call -> check_call c call
-    | Var vr -> check_var c e vr
+    | Var vr -> check_name c e vr
     | Unary (op, operand) -> check_unary c e op operand expected
     | Binary b -> check_binary c b expected
     | Field fa -> check_field c fa
@@ -894,9 +980,86 @@ let rec check_expr c e expected =
     | Addr_of (is_mut, x) -> check_addr_of c e is_mut x
     | Cast (kind, ann, x) -> check_cast c e kind ann x
     | Struct_lit sl -> check_struct_lit c e sl expected
+    | String_lit _ -> Cstring
   in
   e.ty <- t;
   t
+
+(* A name in an expression: a local, a constant, or something reported. *)
+and check_name c (e : expr) vr =
+  match
+    ( Hashtbl.find_opt c.locals vr.var_name,
+      Hashtbl.find_opt c.consts vr.var_name )
+  with
+  | None, Some cd ->
+      vr.var_const <- Some cd;
+      check_const c cd (Some e.span)
+  | _ -> check_var c e vr
+
+(* A constant's type, checking its value the first time. [use] is where it
+   is used, for the error when a constant's value uses the constant itself.
+
+   The value is checked with no locals in scope, since a constant can only
+   see other top-level names. *)
+and check_const c cd use =
+  match cd.c_state with
+  | Checked -> cd.c_ty
+  | Broken -> Err
+  | Checking ->
+      let span = match use with Some s -> s | None -> cd.c_name_span in
+      Report.report
+        (Diag.with_label
+           (Diag.error span
+              (sprintf "Constant '%s' depends on itself" cd.c_name)
+              "Used here, inside its own value")
+           cd.c_name_span "Defined here");
+      cd.c_state <- Broken;
+      Err
+  | Unchecked ->
+      cd.c_state <- Checking;
+      let before = Report.error_count () in
+      let top =
+        {
+          c with
+          locals = Hashtbl.create 1;
+          scopes = [ [] ];
+          ended = [];
+          cur_func = None;
+        }
+      in
+      let ann_ty =
+        match cd.c_ann with
+        | Some ann -> Some (resolve_type top ann)
+        | None -> None
+      in
+      if constant_expr cd.c_value then begin
+        let t = check_value top cd.c_value ann_ty in
+        (match (ann_ty, cd.c_ann) with
+        | Some at, Some ann ->
+            if not (coerce cd.c_value t at) then
+              Report.report
+                (explain
+                   (Diag.with_label
+                      (Diag.error cd.c_value.span
+                         (sprintf
+                            "Constant '%s' of type %s cannot hold a value of \
+                             type %s"
+                            cd.c_name (ty_name at) (ty_name t))
+                         (this_is t))
+                      ann.t_span
+                      (sprintf "Declared as %s here" (ty_name at)))
+                   cd.c_value t at)
+        | _ -> ());
+        cd.c_ty <- (match ann_ty with Some at -> at | None -> t)
+      end;
+      if cd.c_state = Broken || Report.error_count () > before then begin
+        cd.c_state <- Broken;
+        Err
+      end
+      else begin
+        cd.c_state <- Checked;
+        cd.c_ty
+      end
 
 (* Like [check_expr], for positions that need a value. Only a call can be
    void. *)
@@ -1110,6 +1273,13 @@ and binary_type opname op op_span lhs lt rhs rt =
                     "Compare their fields one by one")
            | Ptr (_, a), Ptr (_, b) when a = b -> ()
            | Bool, Bool -> ()
+           | Cstring, Cstring ->
+               Report.report
+                 (Diag.with_note
+                    (Diag.error op_span
+                       (sprintf "Cannot compare cstrings with '%s'" opname)
+                       "")
+                    "It would compare their addresses, not their text")
            | _ ->
                operand_error op_span
                  (sprintf
@@ -1323,6 +1493,9 @@ and not_a_struct c name span =
       | Func_name f ->
           Report.report
             (Diag.with_label d f.f_name_span "Function defined here")
+      | Const_name cd ->
+          Report.report
+            (Diag.with_label d cd.c_name_span "Constant defined here")
       | Builtin_type | Builtin_function -> Report.report d
       | Struct_name _ | Free ->
           Report.report
@@ -1449,6 +1622,11 @@ and check_missing_pointers c sl sd (fields : field list) named =
                      (sprintf "Field '%s' must be given a value" f.fd_name)
                      (sprintf "Missing '%s'" f.fd_name))
                   (match path with
+                  | [] when f.fd_ty = Cstring ->
+                      sprintf
+                        "'%s' is a cstring, which points to text, so it cannot \
+                         be zero"
+                        f.fd_name
                   | [] ->
                       sprintf "'%s' is a pointer, and pointers cannot be zero"
                         f.fd_name
@@ -1494,9 +1672,10 @@ and check_arg_only c arg = ignore (check_value c arg None)
    number of digits after the point. *)
 and check_printed c (x : expr) =
   let t = check_value c x None in
-  if t <> Err && not (is_number t || t = Bool) then
+  if t <> Err && not (is_number t || t = Bool || t = Cstring) then
     Report.report
-      (Diag.error x.span "'print' takes a number or a bool" (this_is t));
+      (Diag.error x.span "'print' takes a number, a bool or a cstring"
+         (this_is t));
   t
 
 and check_print c call =
@@ -1505,7 +1684,7 @@ and check_print c call =
   | [ x; n ] ->
       let t = check_printed c x in
       let nt = check_value c n None in
-      if is_int t || t = Bool then
+      if is_int t || t = Bool || t = Cstring then
         Report.report
           (Diag.with_label
              (Diag.error n.span "A precision only applies to floats" "Precision")
@@ -1563,6 +1742,15 @@ and check_call c call =
             end
             else check_args c call.callee call.args f.param_tys f.params 1;
             f.ret_ty
+        | Const_name cd ->
+            Report.report
+              (Diag.with_label
+                 (Diag.error call.callee_span
+                    (sprintf "'%s' is a constant, not a function" call.callee)
+                    "")
+                 cd.c_name_span "Constant defined here");
+            check_args_only c call.args;
+            Err
         | Struct_name sd ->
             Report.report
               (Diag.with_help
@@ -1945,7 +2133,17 @@ let missing_return f =
           might not run"
      else d)
 
-let check_func c f =
+let rec check_foreign_params (params : param list) =
+  match params with
+  | [] -> ()
+  | prm :: rest ->
+      if prm.p_mut then
+        Report.report
+          (Diag.error prm.p_span
+             "Parameters of a foreign function cannot be 'mut'" "Declared 'mut'");
+      check_foreign_params rest
+
+let check_body c f =
   c.cur_func <- Some f;
   c.next_id <- 1;
   c.ended <- [];
@@ -1957,12 +2155,31 @@ let check_func c f =
   f.nsyms <- c.next_id - 1;
   c.cur_func <- None
 
+(* A foreign function has no body; only its signature is checked. *)
+let check_func c f =
+  if f.f_foreign <> None then check_foreign_params f.params else check_body c f
+
+let declare_const c cd =
+  match global_meaning c cd.c_name with
+  | Const_name prev ->
+      Report.report
+        (Diag.with_label
+           (Diag.error cd.c_name_span
+              (sprintf "Constant '%s' is already defined" cd.c_name)
+              "Defined again here")
+           prev.c_name_span "First defined here")
+  | Free -> Hashtbl.replace c.consts cd.c_name cd
+  | _ -> ignore (check_global_free c cd.c_name cd.c_name_span)
+
+let check_const_decl c cd = ignore (check_const c cd None)
+
 let check_file (file : file) =
   let c =
     {
       file = file.path;
       funcs = Hashtbl.create 16;
       structs = Hashtbl.create 16;
+      consts = Hashtbl.create 16;
       locals = Hashtbl.create 16;
       scopes = [];
       ended = [];
@@ -1971,6 +2188,7 @@ let check_file (file : file) =
     }
   in
   List.iter (declare_struct c) file.structs;
+  List.iter (declare_const c) file.consts;
   List.iter (check_struct_fields c) file.structs;
   let reported = ref [] in
   List.iter (check_cycle c reported) file.structs;
@@ -1980,4 +2198,7 @@ let check_file (file : file) =
       (Diag.with_help
          (Diag.file_error c.file "No 'main' function found")
          "Add one, like 'main :: fn() { }'" []);
+  (* Constants are checked on first use; this checks the unused ones, and
+     those used only by other constants, in order. *)
+  List.iter (check_const_decl c) file.consts;
   List.iter (check_func c) file.funcs

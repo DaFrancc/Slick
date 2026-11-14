@@ -29,6 +29,10 @@ let peek2_kind p =
   if p.pos + 1 < Array.length p.toks then p.toks.(p.pos + 1).Token.kind
   else Token.Eof
 
+let peek3_kind p =
+  if p.pos + 2 < Array.length p.toks then p.toks.(p.pos + 2).Token.kind
+  else Token.Eof
+
 let advance p =
   let tok = peek p in
   if tok.kind <> Token.Eof then p.pos <- p.pos + 1;
@@ -56,11 +60,11 @@ let expected_error p what =
 
 let fail_expected p what = syntax_error p (expected_error p what)
 
-(* At the top level, where only functions and structs are allowed so far. *)
+(* At the top level, where only a few kinds of declaration are allowed. *)
 let fail_top_level p what =
   syntax_error p
     (Diag.with_note (expected_error p what)
-       "Only functions and structs can be defined at the top level for now")
+       "The top level holds functions, structs, constants and foreign blocks")
 
 (* On a mismatch, reports and returns the current token without consuming
    it. *)
@@ -127,6 +131,12 @@ let expect_close_paren p =
   end
 
 (* A ';' where no statement or definition can start. It is consumed. *)
+(* A constant inside a function, at its '::' or second ':'. *)
+let local_constant p (sep : Diag.span) =
+  soft_error p
+    (Diag.error sep "Constants can only be declared at the top level for now"
+       "Not allowed in a function")
+
 let stray_semi p top_level =
   let tok = advance p in
   let d =
@@ -185,9 +195,11 @@ let synchronize p start =
 let at_function_start p =
   match peek_kind p with
   | Token.Ident _ -> peek2_kind p = Token.ColonColon
+  | Token.Foreign -> true
   | _ -> false
 
-(* The same at the top level: skip to the next 'name ::' or the end. *)
+(* The same at the top level: skip to the next 'name ::', 'foreign' or the
+   end. *)
 let synchronize_top p start =
   if p.pos = start && peek_kind p <> Token.Eof then ignore (advance p);
   while peek_kind p <> Token.Eof && not (at_function_start p) do
@@ -427,6 +439,9 @@ and parse_primary p =
   | Token.Float text ->
       ignore (advance p);
       mk_expr (Float { text; fneg = false }) tok.span
+  | Token.String s ->
+      ignore (advance p);
+      mk_expr (String_lit s) tok.span
   | Token.True ->
       ignore (advance p);
       mk_expr (Bool_lit true) tok.span
@@ -447,7 +462,10 @@ and parse_primary p =
       end
       else if peek_kind p = Token.LBrace && not p.no_struct_lit then
         parse_struct_lit p (Some (name, tok.span)) tok.span
-      else mk_expr (Var { var_name = name; var_sym = None }) tok.span
+      else
+        mk_expr
+          (Var { var_name = name; var_sym = None; var_const = None })
+          tok.span
   | Token.Dot when peek2_kind p = Token.LBrace ->
       ignore (advance p);
       parse_struct_lit p None tok.span
@@ -611,9 +629,19 @@ and parse_block_rest p open_span acc =
   | Token.Eof ->
       unclosed_block p open_span;
       { stmts = List.rev acc; close_span = (peek p).span }
-  | Token.Ident _ when peek2_kind p = Token.ColonColon ->
+  | Token.Ident _
+    when peek2_kind p = Token.ColonColon
+         && (peek3_kind p = Token.Fn || peek3_kind p = Token.Struct) ->
       unclosed_block p open_span;
       { stmts = List.rev acc; close_span = (peek p).span }
+  | Token.Ident _ when peek2_kind p = Token.ColonColon ->
+      let start = p.pos in
+      ignore (advance p);
+      local_constant p (advance p).span;
+      ignore (parse_expr p);
+      expect_semi p;
+      if p.panicking then synchronize p start;
+      parse_block_rest p open_span acc
   | _ ->
       let start = p.pos in
       let s = parse_stmt p in
@@ -688,8 +716,12 @@ and parse_decl p =
     | kind when starts_type kind && not d_colon_eq -> Some (parse_type p)
     | _ -> None
   in
+  (* 'x : i32 : 5;' is a typed constant, which is top-level only. *)
+  if d_ann <> None && peek_kind p = Token.Colon then
+    local_constant p (advance p).span;
   let d_init =
     if d_colon_eq then Some (parse_expr p)
+    else if prev_kind p = Token.Colon && d_ann <> None then Some (parse_expr p)
     else if peek_kind p = Token.Assign then begin
       ignore (advance p);
       Some (parse_expr p)
@@ -773,6 +805,7 @@ and keyword_like name =
       ("true", 6);
       ("false", 7);
       ("struct", 8);
+      ("foreign", 9);
     ]
 
 and misspelled_keyword p e name =
@@ -851,6 +884,7 @@ let recover_in_signature p kind =
   while
     peek_kind p <> kind
     && peek_kind p <> Token.LBrace
+    && peek_kind p <> Token.Semi
     && peek_kind p <> Token.Eof
   do
     ignore (advance p)
@@ -859,8 +893,6 @@ let recover_in_signature p kind =
   p.panicking <- false
 
 (* ---- Structs ---- *)
-
-type item = Func_item of func | Struct_item of struct_decl
 
 (* A leading 'mut' on a field is reported and skipped. *)
 let skip_field_mut p =
@@ -920,62 +952,354 @@ let parse_struct p (name : Token.t) =
   let s_fields = if p.panicking then [] else parse_fields p [] in
   { s_name = name.text; s_name_span = name.span; s_fields }
 
+(* ---- Attributes ---- *)
+
+(* '#name("argument")'. [at_arg] is None when the argument is missing or is
+   not a string, which has been reported. *)
+type attribute = {
+  at_name : string;
+  at_span : Diag.span;
+  at_arg : string option;
+}
+
+let known_attributes = [ "link_name"; "link_prefix" ]
+
+let attribute_arg_error p name =
+  soft_error p
+    (Diag.error (peek p).span
+       (Printf.sprintf "'#%s' expects a string, like #%s(\"name\")" name name)
+       "Expected a string in parentheses")
+
+(* After '#name': '(' string ')'. Anything else is reported, and skipped up
+   to a ')' on the same line. *)
+let parse_attribute p (tok : Token.t) name =
+  match (peek_kind p, peek2_kind p) with
+  | Token.LParen, Token.String arg when p.toks.(p.pos + 2).kind = Token.RParen
+    ->
+      ignore (advance p);
+      ignore (advance p);
+      let close = advance p in
+      {
+        at_name = name;
+        at_span = Diag.join tok.span close.span;
+        at_arg = Some arg;
+      }
+  | _ ->
+      attribute_arg_error p name;
+      if peek_kind p = Token.LParen then begin
+        let line = (peek p).span.start_line in
+        while
+          peek_kind p <> Token.RParen
+          && peek_kind p <> Token.Eof
+          && (peek p).span.start_line = line
+        do
+          ignore (advance p)
+        done;
+        if peek_kind p = Token.RParen then ignore (advance p)
+      end;
+      { at_name = name; at_span = tok.span; at_arg = None }
+
+let rec parse_attributes p acc =
+  match peek_kind p with
+  | Token.Directive name ->
+      let tok = advance p in
+      parse_attributes p (parse_attribute p tok name :: acc)
+  | _ -> List.rev acc
+
+(* Reports each attribute that is unknown or not allowed here: [allowed]
+   names the ones this position takes, and [misplaced] says where an
+   attribute that is known but not allowed belongs. *)
+let rec check_attributes p (attrs : attribute list) allowed misplaced =
+  match attrs with
+  | [] -> ()
+  | a :: rest ->
+      (if not (List.mem a.at_name allowed) then
+         let name_span =
+           {
+             a.at_span with
+             end_line = a.at_span.start_line;
+             end_col = a.at_span.start_col + 1 + String.length a.at_name;
+           }
+         in
+         if List.mem a.at_name known_attributes then
+           soft_error p
+             (Diag.error name_span (misplaced a.at_name) "Not allowed here")
+         else
+           let d =
+             Diag.error name_span
+               (Printf.sprintf "Unknown attribute '#%s'" a.at_name)
+               "Unknown"
+           in
+           let candidates = [ ("link_name", 0); ("link_prefix", 1) ] in
+           soft_error p
+             (match Suggest.closest a.at_name candidates with
+             | Some s ->
+                 Diag.with_help d
+                   (Printf.sprintf "Did you mean '#%s'?" s)
+                   [ Diag.edit name_span ("#" ^ s) ]
+             | None -> d));
+      check_attributes p rest allowed misplaced
+
+let rec attribute_arg name (attrs : attribute list) =
+  match attrs with
+  | [] -> None
+  | a :: rest -> if a.at_name = name then a.at_arg else attribute_arg name rest
+
+let misplaced_on_function name =
+  Printf.sprintf "'#%s' goes on a foreign block, not a function" name
+
+let misplaced_on_block name =
+  Printf.sprintf "'#%s' goes on a function in a foreign block, not the block"
+    name
+
 (* ---- Functions ---- *)
 
-(* Returns None if the definition is broken before its parameter list; the
-   caller then skips to the next definition. *)
+type item =
+  | Func_item of func
+  | Struct_item of struct_decl
+  | Const_item of const_decl
+  | Foreign_items of func list
+
+(* After 'fn': the parameter list and the return type. *)
+let parse_signature p =
+  let open_span = (peek p).span in
+  let has_open = peek_kind p = Token.LParen in
+  if has_open then ignore (advance p) else fail_expected p "'('";
+  let params =
+    if has_open && peek_kind p <> Token.RParen then parse_param_groups p []
+    else []
+  in
+  if not p.panicking then ignore (expect p Token.RParen "')'");
+  if p.panicking then recover_in_signature p Token.RParen;
+  let params_span = Diag.join open_span (prev_span p) in
+  let ret_ann =
+    if peek_kind p = Token.Arrow then begin
+      ignore (advance p);
+      Some (parse_type p)
+    end
+    else None
+  in
+  (params, params_span, ret_ann)
+
+let make_func (name : Token.t) params params_span ret_ann body f_foreign =
+  {
+    f_name = name.text;
+    f_name_span = name.span;
+    params;
+    params_span;
+    ret_ann;
+    body;
+    param_tys = [];
+    ret_ty = Void;
+    nsyms = 0;
+    f_foreign;
+  }
+
+(* After 'Name :: fn'. A ';' where the body should be is probably a C
+   function declared outside a foreign block. *)
+let parse_func p (name : Token.t) =
+  let params, params_span, ret_ann = parse_signature p in
+  if p.panicking then recover_in_signature p Token.LBrace;
+  if peek_kind p = Token.Semi && not p.panicking then
+    syntax_error p
+      (Diag.with_note
+         (expected_error p "'{' to start the function body")
+         "To declare a C function, put it in a 'foreign' block");
+  let body = parse_block p in
+  make_func name params params_span ret_ann body None
+
+(* ---- Constants ---- *)
+
+let make_const (name : Token.t) c_ann c_value =
+  {
+    c_name = name.text;
+    c_name_span = name.span;
+    c_ann;
+    c_value;
+    c_ty = Err;
+    c_state = Unchecked;
+  }
+
+(* After 'Name ::' or 'Name : Type :'. *)
+let parse_const_value p (name : Token.t) ann =
+  let value = parse_expr p in
+  expect_semi p;
+  make_const name ann value
+
+(* After 'Name :'. A '=' instead of the second ':' is an attempt at a global
+   variable. *)
+let parse_typed_const p (name : Token.t) =
+  let ann = parse_type p in
+  if peek_kind p = Token.Assign && not p.panicking then
+    syntax_error p
+      (Diag.with_note (expected_error p "':'")
+         (Printf.sprintf
+            "Global variables are not supported yet. For a constant, write '%s \
+             : %s : ...;'"
+            name.text
+            (match Report.span_text ann.t_span with Some t -> t | None -> "T")))
+  else ignore (expect p Token.Colon "':'");
+  parse_const_value p name (Some ann)
+
+(* ---- Foreign blocks ---- *)
+
+(* Skips a broken or misplaced item in a foreign block: up to and including
+   a ';', or up to the block's '}'. Braces in between are skipped whole. *)
+let skip_foreign_item p =
+  let depth = ref 0 in
+  let stop = ref false in
+  while not !stop do
+    match peek_kind p with
+    | Token.Eof -> stop := true
+    | Token.Semi when !depth = 0 ->
+        ignore (advance p);
+        stop := true
+    | Token.RBrace when !depth = 0 -> stop := true
+    | Token.LBrace ->
+        incr depth;
+        ignore (advance p)
+    | Token.RBrace ->
+        decr depth;
+        ignore (advance p)
+    | _ -> ignore (advance p)
+  done;
+  p.panicking <- false
+
+(* Skips a block from its '{' to its '}', both included. *)
+let skip_braces p =
+  let depth = ref 0 in
+  let stop = ref false in
+  while not !stop do
+    match peek_kind p with
+    | Token.Eof -> stop := true
+    | Token.LBrace ->
+        incr depth;
+        ignore (advance p)
+    | Token.RBrace ->
+        ignore (advance p);
+        decr depth;
+        if !depth = 0 then stop := true
+    | _ -> ignore (advance p)
+  done
+
+(* 'Name :: fn(...) -> T #link_name("...");' inside a foreign block. *)
+let parse_foreign_decl p lib prefix =
+  let name = advance p in
+  ignore (advance p);
+  ignore (advance p);
+  let params, params_span, ret_ann = parse_signature p in
+  let attrs = parse_attributes p [] in
+  check_attributes p attrs [ "link_name" ] misplaced_on_function;
+  let symbol =
+    match attribute_arg "link_name" attrs with
+    | Some s -> s
+    | None -> prefix ^ name.text
+  in
+  if (not p.panicking) && peek_kind p = Token.LBrace then begin
+    let d =
+      Diag.error (peek p).span "A foreign function cannot have a body"
+        "Not allowed in a foreign block"
+    in
+    soft_error p
+      (Diag.with_note d
+         (if lib = "" then "Its code is in C"
+          else Printf.sprintf "Its code is in the library '%s'" lib));
+    skip_braces p
+  end
+  else if not p.panicking then expect_semi p;
+  make_func name params params_span ret_ann
+    { stmts = []; close_span = name.span }
+    (Some { lib; symbol })
+
+let is_foreign_decl p =
+  match peek_kind p with
+  | Token.Ident _ ->
+      peek2_kind p = Token.ColonColon
+      && p.pos + 2 < Array.length p.toks
+      && p.toks.(p.pos + 2).kind = Token.Fn
+  | _ -> false
+
+(* After the block's '{'. Consumes the '}'. *)
+let rec parse_foreign_decls p lib prefix acc =
+  match peek_kind p with
+  | Token.RBrace ->
+      ignore (advance p);
+      List.rev acc
+  | Token.Eof ->
+      fail_expected p "'}'";
+      List.rev acc
+  | _ when is_foreign_decl p ->
+      let f = parse_foreign_decl p lib prefix in
+      if p.panicking then skip_foreign_item p;
+      parse_foreign_decls p lib prefix (f :: acc)
+  | _ ->
+      let tok = peek p in
+      soft_error p
+        (Diag.error tok.span
+           "Only function declarations can go in a foreign block"
+           "Not a function declaration");
+      skip_foreign_item p;
+      parse_foreign_decls p lib prefix acc
+
+(* 'foreign "lib" #link_prefix("...") { ... }'. *)
+let parse_foreign p =
+  ignore (advance p);
+  let lib =
+    match peek_kind p with
+    | Token.String s ->
+        ignore (advance p);
+        s
+    | Token.LBrace ->
+        (* The block itself is fine, so it is still parsed. *)
+        soft_error p
+          (expected_error p "the library's name, like foreign \"raylib\"");
+        ""
+    | _ ->
+        fail_expected p "the library's name, like foreign \"raylib\"";
+        ""
+  in
+  if p.panicking then []
+  else begin
+    let attrs = parse_attributes p [] in
+    check_attributes p attrs [ "link_prefix" ] misplaced_on_block;
+    let prefix =
+      match attribute_arg "link_prefix" attrs with Some s -> s | None -> ""
+    in
+    ignore (expect p Token.LBrace "'{'");
+    if p.panicking then [] else parse_foreign_decls p lib prefix []
+  end
+
+(* ---- The file ---- *)
+
+(* Returns None if the item is too broken to keep; the caller then skips to
+   the next one. *)
 let parse_item p =
   let name = advance p in
-  if peek_kind p <> Token.ColonColon then begin
-    fail_top_level p "'::'";
-    None
-  end
-  else begin
-    ignore (advance p);
-    if peek_kind p = Token.Struct then begin
+  match peek_kind p with
+  | Token.Colon ->
       ignore (advance p);
-      Some (Struct_item (parse_struct p name))
-    end
-    else if peek_kind p <> Token.Fn then begin
-      fail_top_level p "'fn' or 'struct'";
-      None
-    end
-    else begin
+      Some (Const_item (parse_typed_const p name))
+  | Token.ColonColon -> (
       ignore (advance p);
-      let open_span = (peek p).span in
-      let has_open = peek_kind p = Token.LParen in
-      if has_open then ignore (advance p) else fail_expected p "'('";
-      let params =
-        if has_open && peek_kind p <> Token.RParen then parse_param_groups p []
-        else []
-      in
-      if not p.panicking then ignore (expect p Token.RParen "')'");
-      if p.panicking then recover_in_signature p Token.RParen;
-      let params_span = Diag.join open_span (prev_span p) in
-      let ret_ann =
-        if peek_kind p = Token.Arrow then begin
+      match peek_kind p with
+      | Token.Struct ->
           ignore (advance p);
-          Some (parse_type p)
-        end
-        else None
-      in
-      if p.panicking then recover_in_signature p Token.LBrace;
-      let body = parse_block p in
-      Some
-        (Func_item
-           {
-             f_name = name.text;
-             f_name_span = name.span;
-             params;
-             params_span;
-             ret_ann;
-             body;
-             param_tys = [];
-             ret_ty = Void;
-             nsyms = 0;
-           })
-    end
-  end
+          Some (Struct_item (parse_struct p name))
+      | Token.Fn ->
+          ignore (advance p);
+          Some (Func_item (parse_func p name))
+      | _ -> Some (Const_item (parse_const_value p name None)))
+  | Token.ColonEq ->
+      syntax_error p
+        (Diag.with_note (expected_error p "'::'")
+           (Printf.sprintf
+              "Global variables are not supported yet. For a constant, write \
+               '%s :: ...;'"
+              name.text));
+      None
+  | _ ->
+      fail_top_level p "'::'";
+      None
 
 let rec parse_items p acc =
   match peek_kind p with
@@ -983,6 +1307,11 @@ let rec parse_items p acc =
   | Token.Semi ->
       stray_semi p true;
       parse_items p acc
+  | Token.Foreign ->
+      let start = p.pos in
+      let funcs = parse_foreign p in
+      if p.panicking then synchronize_top p start;
+      parse_items p (Foreign_items funcs :: acc)
   | Token.Ident _ ->
       let start = p.pos in
       let acc =
@@ -992,12 +1321,19 @@ let rec parse_items p acc =
       parse_items p acc
   | _ ->
       let start = p.pos in
-      fail_top_level p "a function or struct definition";
+      fail_top_level p "a declaration";
       synchronize_top p start;
       parse_items p acc
 
 let struct_of item = match item with Struct_item s -> Some s | _ -> None
-let func_of item = match item with Func_item f -> Some f | _ -> None
+let const_of item = match item with Const_item c -> Some c | _ -> None
+
+let rec funcs_of (items : item list) =
+  match items with
+  | [] -> []
+  | Func_item f :: rest -> f :: funcs_of rest
+  | Foreign_items fs :: rest -> fs @ funcs_of rest
+  | _ :: rest -> funcs_of rest
 
 let parse_file path toks =
   let p = { toks; pos = 0; panicking = false; no_struct_lit = false } in
@@ -1005,5 +1341,6 @@ let parse_file path toks =
   {
     path;
     structs = List.filter_map struct_of items;
-    funcs = List.filter_map func_of items;
+    consts = List.filter_map const_of items;
+    funcs = funcs_of items;
   }

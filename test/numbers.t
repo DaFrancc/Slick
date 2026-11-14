@@ -444,7 +444,7 @@ A literal inside a cast takes the cast's type, so it must fit it.
   6 |     e := cast(Foo, 1);
     |               ^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Could not compile 'cast_errors.slick' due to 4 errors
   [1]

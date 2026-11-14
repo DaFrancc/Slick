@@ -4,6 +4,8 @@ type kind =
      front is a separate token; the parser folds it in. *)
   | Int of Int64.t
   | Float of string (* the source text without '_' *)
+  | String of string (* the bytes, escapes decoded *)
+  | Directive of string (* '#name', without the '#' *)
   (* keywords *)
   | Fn
   | Mut
@@ -14,6 +16,7 @@ type kind =
   | True
   | False
   | Struct
+  | Foreign
   (* punctuation *)
   | LParen
   | RParen

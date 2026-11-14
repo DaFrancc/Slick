@@ -108,7 +108,7 @@ An unknown type is reported once; uses of the name raise nothing more.
   2 |     x : Foo = 1;
     |         ^^^ Not a type
     |
-  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool and cstring
   
   Error: Could not compile 'unknown_once.slick' due to 1 error
   [1]
@@ -314,7 +314,7 @@ Columns count characters: the '@' after a two-byte 'é' is in column 13.
   2 |     print(é @);
     |           ^
     |
-  Note: Only comments can contain characters outside ASCII
+  Note: Only comments and strings can contain characters outside ASCII
   
   Error: Unexpected character '@'
    --> utf8.slick:2:13
