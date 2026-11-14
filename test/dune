@@ -1,0 +1,13 @@
+; CC is a dependency so that 'CC=clang dune test' reruns every test with
+; clang instead of replaying the results from the last run.
+
+(cram
+ (deps
+  %{bin:slick}
+  (glob_files %{project_root}/examples/*.slick)
+  (env_var CC)))
+
+(cram
+ (applies_to compilers)
+ (enabled_if
+  (and %{bin-available:gcc} %{bin-available:clang})))

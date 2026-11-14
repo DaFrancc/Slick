@@ -1,0 +1,14 @@
+// Prints the first ten Fibonacci numbers.
+
+fib :: fn(n: i32) -> i32 {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+main :: fn() {
+    i : mut = 0;
+    while i < 10 {
+        print(fib(i));
+        i += 1;
+    }
+}

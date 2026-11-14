@@ -128,6 +128,8 @@ Explicit casts use a builtin function, chosen because every cast is easy to grep
 
 `cast` converts the value (`cast(u32, 1.5)` is `1`). `bitcast` reinterprets the raw bits and only works between types of the same size: `bitcast(u32, 1.5)` is `0x3FC00000`.
 
+Integer overflow panics with the file and line in debug builds and wraps around in release builds. Until there are debug and release builds, it always wraps. Integer division truncates toward zero, and dividing by zero panics in every build.
+
 ## Arrays and slices
 
 The compiler knows only fixed arrays and slices. Everything growable is a standard-library generic type.
@@ -176,6 +178,8 @@ c := a + b;
 
 - Overloadable: `+ - * /`, comparisons (`==`, `<`, and so on), and `[]`.
 - `Vec3`, `Mat4`, `Quat` and other math types are library types built this way, not built into the compiler.
+
+Evaluation is strictly left to right: call arguments, and the operands of every operator, whatever the precedence. In `a() + b() * c()`, the calls run as `a`, `b`, `c`. `&&` and `||` skip their right side when the left side decides the result. C leaves this order to the compiler, so the C backend fixes it with temporaries.
 
 Swizzles are ordinary library functions called with dot syntax, so they need no language feature: `xy :: fn(v: Vec3) -> Vec2 #pub { return .{ v.x, v.y }; }`, used as `pos.xy()`. The full set gets generated with `#run` once it exists.
 
@@ -440,3 +444,5 @@ Milestones:
 - [x] Attribute placement: decided (see Declarations and syntax).
 - [x] Statement terminator: decided, `;` (see Declarations and syntax).
 - [x] Shadowing: decided, not allowed (see Declarations and syntax).
+- [x] Integer overflow: decided, panics in debug builds and wraps in release (see Primitive types).
+- [x] Evaluation order: decided, strictly left to right (see Operators).
