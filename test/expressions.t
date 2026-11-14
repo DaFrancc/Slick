@@ -90,7 +90,8 @@ where C division would trap.
   -2147483648
   0
 
-A literal must fit in i32. 2147483648 only fits when negated.
+A literal with nothing giving it a type is an i32, so it must fit in one.
+2147483648 only fits when negated. No integer type holds the second one.
 
   $ cat > big.slick <<'EOF'
   > main :: fn() {
@@ -102,7 +103,7 @@ A literal must fit in i32. 2147483648 only fits when negated.
    --> big.slick:2:11
     |
   2 |     print(2147483648);
-    |           ^^^^^^^^^^ Too large
+    |           ^^^^^^^^^^ Too large for i32
     |
   Note: An i32 holds values from -2147483648 to 2147483647
   
@@ -115,32 +116,15 @@ A literal must fit in i32. 2147483648 only fits when negated.
   > }
   > EOF
   $ slick run huge.slick
-  Error: Integer literal 99999999999999999999999 does not fit in i32
+  Error: Integer literal 99999999999999999999999 is too large
    --> huge.slick:2:11
     |
   2 |     print(99999999999999999999999);
-    |           ^^^^^^^^^^^^^^^^^^^^^^^ Too large
+    |           ^^^^^^^^^^^^^^^^^^^^^^^ Larger than any integer type
     |
-  Note: An i32 holds values from -2147483648 to 2147483647
+  Note: The largest is u64, which holds up to 18446744073709551615
   
   Error: Could not compile 'huge.slick' due to 1 error
-  [1]
-
-  $ cat > hex.slick <<'EOF'
-  > main :: fn() {
-  >     print(0x10);
-  > }
-  > EOF
-  $ slick run hex.slick
-  Error: Invalid integer literal '0x10'
-   --> hex.slick:2:11
-    |
-  2 |     print(0x10);
-    |           ^^^^ Only digits and '_' are allowed
-    |
-  Note: Hexadecimal, binary and float literals are not supported yet
-  
-  Error: Could not compile 'hex.slick' due to 1 error
   [1]
 
 Dividing by zero is a runtime panic. Output printed before it still appears
@@ -193,28 +177,13 @@ An expression can break across lines anywhere, including before an operator.
 
 Operand type errors, each pointing at the operator.
 
-  $ cat > print_bool.slick <<'EOF'
-  > main :: fn() {
-  >     print(true);
-  > }
-  > EOF
-  $ slick run print_bool.slick
-  Error: Argument 1 of 'print' expects i32, found bool
-   --> print_bool.slick:2:11
-    |
-  2 |     print(true);
-    |           ^^^^ This is bool
-  
-  Error: Could not compile 'print_bool.slick' due to 1 error
-  [1]
-
   $ cat > add_bool.slick <<'EOF'
   > main :: fn() {
   >     print(1 + true);
   > }
   > EOF
   $ slick run add_bool.slick
-  Error: Operator '+' expects i32 operands, found i32 and bool
+  Error: Operator '+' expects numbers, found i32 and bool
    --> add_bool.slick:2:13
     |
   2 |     print(1 + true);
@@ -231,7 +200,7 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run less_bool.slick
-  Error: Operator '<' expects i32 operands, found bool and i32
+  Error: Operator '<' expects numbers, found bool and i32
    --> less_bool.slick:2:16
     |
   2 |     b := false < 1;
@@ -266,7 +235,7 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run neg_bool.slick
-  Error: Operator '-' expects i32, found bool
+  Error: Operator '-' expects a number, found bool
    --> neg_bool.slick:2:11
     |
   2 |     print(-true);
@@ -308,21 +277,6 @@ Operand type errors, each pointing at the operator.
     |                  - i32
   
   Error: Could not compile 'and_int.slick' due to 1 error
-  [1]
-
-  $ cat > cmp_result.slick <<'EOF'
-  > main :: fn() {
-  >     print(1 == 1);
-  > }
-  > EOF
-  $ slick run cmp_result.slick
-  Error: Argument 1 of 'print' expects i32, found bool
-   --> cmp_result.slick:2:11
-    |
-  2 |     print(1 == 1);
-    |           ^^^^^^ This is bool
-  
-  Error: Could not compile 'cmp_result.slick' due to 1 error
   [1]
 
 Comparisons cannot be chained.
@@ -420,7 +374,8 @@ the next line. The missing ')' is shown in place, with '+' under it.
   Error: Could not compile 'missing_operand.slick' due to 1 error
   [1]
 
-Argument counts for print.
+print takes one or two arguments. The second, a precision, only applies to
+floats.
 
   $ cat > print_two.slick <<'EOF'
   > main :: fn() {
@@ -428,11 +383,12 @@ Argument counts for print.
   > }
   > EOF
   $ slick run print_two.slick
-  Error: 'print' expects 1 argument, found 2
-   --> print_two.slick:2:10
+  Error: A precision only applies to floats
+   --> print_two.slick:2:14
     |
   2 |     print(1, 2);
-    |          ^^^^^^ Found 2 arguments
+    |           - This is i32
+    |              ^ Precision
   
   Error: Could not compile 'print_two.slick' due to 1 error
   [1]
@@ -443,7 +399,7 @@ Argument counts for print.
   > }
   > EOF
   $ slick run print_none.slick
-  Error: 'print' expects 1 argument, found 0
+  Error: 'print' expects 1 or 2 arguments, found 0
    --> print_none.slick:2:10
     |
   2 |     print();
@@ -475,7 +431,7 @@ A comparison used as a statement was probably meant as an assignment.
   Error: Could not compile 'eq_stmt.slick' due to 1 error
   [1]
 
-Single '&' and '|', and a float literal.
+'&' and '|' are bitwise operators, so on bools they suggest '&&' and '||'.
 
   $ cat > amp.slick <<'EOF'
   > main :: fn() {
@@ -483,13 +439,16 @@ Single '&' and '|', and a float literal.
   > }
   > EOF
   $ slick run amp.slick
-  Error: Unexpected character '&'
+  Error: Operator '&' does not work on bool
    --> amp.slick:2:13
     |
   2 |     if true & false { }
     |             ^
     |
-  Help: Use '&&' for logical and
+  Help: For a logical and, use '&&'
+    |
+  2 |     if true && false { }
+    |             ~~
   
   Error: Could not compile 'amp.slick' due to 1 error
   [1]
@@ -500,31 +459,17 @@ Single '&' and '|', and a float literal.
   > }
   > EOF
   $ slick run pipe.slick
-  Error: Unexpected character '|'
+  Error: Operator '|' does not work on bool
    --> pipe.slick:2:13
     |
   2 |     if true | false { }
     |             ^
     |
-  Help: Use '||' for logical or
+  Help: For a logical or, use '||'
+    |
+  2 |     if true || false { }
+    |             ~~
   
   Error: Could not compile 'pipe.slick' due to 1 error
-  [1]
-
-  $ cat > float.slick <<'EOF'
-  > main :: fn() {
-  >     print(1.5);
-  > }
-  > EOF
-  $ slick run float.slick
-  Error: Unexpected character '.'
-   --> float.slick:2:12
-    |
-  2 |     print(1.5);
-    |            ^
-    |
-  Note: Float literals are not supported yet
-  
-  Error: Could not compile 'float.slick' due to 1 error
   [1]
 

@@ -65,6 +65,12 @@ let rec parse_options opts args =
   | arg :: rest when arg = "--color" || starts_with arg "--color=" ->
       check_color arg;
       parse_options opts rest
+  | "--warn-implicit-conversions" :: rest ->
+      Options.v.warn_implicit <- true;
+      parse_options opts rest
+  | "--warnings-as-errors" :: rest ->
+      Options.v.warnings_as_errors <- true;
+      parse_options opts rest
   | arg :: rest ->
       if String.length arg > 1 && arg.[0] = '-' then
         Driver.arg_error (Printf.sprintf "Unknown option '%s'" arg);

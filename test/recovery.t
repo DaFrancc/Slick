@@ -108,7 +108,7 @@ An unknown type is reported once; uses of the name raise nothing more.
   2 |     x : Foo = 1;
     |         ^^^ Not a type
     |
-  Note: The types available now are i32 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
   
   Error: Could not compile 'unknown_once.slick' due to 1 error
   [1]
@@ -124,7 +124,7 @@ type, so using it later is fine.
   > }
   > EOF
   $ slick run operand_once.slick
-  Error: Operator '+' expects i32 operands, found i32 and bool
+  Error: Operator '+' expects numbers, found i32 and bool
    --> operand_once.slick:2:13
     |
   2 |     print(1 + true);
@@ -132,7 +132,7 @@ type, so using it later is fine.
     |             ^
     |               ---- bool
   
-  Error: Operator '+' expects i32 operands, found i32 and bool
+  Error: Operator '+' expects numbers, found i32 and bool
    --> operand_once.slick:3:12
     |
   3 |     y := 1 + true;
@@ -274,7 +274,7 @@ there are none, since a skipped character would confuse it.
   $ cat > lexer.slick <<'EOF'
   > main :: fn() {
   >     x := 1 @ 2;
-  >     y := 0x10;
+  >     y := 0x1G;
   >     z := 3 $ 4;
   > }
   > EOF
@@ -285,13 +285,11 @@ there are none, since a skipped character would confuse it.
   2 |     x := 1 @ 2;
     |            ^
   
-  Error: Invalid integer literal '0x10'
+  Error: Invalid integer literal '0x1G'
    --> lexer.slick:3:10
     |
-  3 |     y := 0x10;
-    |          ^^^^ Only digits and '_' are allowed
-    |
-  Note: Hexadecimal, binary and float literals are not supported yet
+  3 |     y := 0x1G;
+    |          ^^^^ Only hexadecimal digits and '_' are allowed
   
   Error: Unexpected character '$'
    --> lexer.slick:4:12

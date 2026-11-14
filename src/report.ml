@@ -3,12 +3,21 @@
 type state = {
   mutable diags : Diag.diagnostic list; (* in reverse order *)
   mutable errors : int;
+  mutable warnings : int;
   mutable path : string;
   mutable lines : string array; (* the source, for excerpts *)
   mutable color : bool;
 }
 
-let st = { diags = []; errors = 0; path = ""; lines = [||]; color = false }
+let st =
+  {
+    diags = [];
+    errors = 0;
+    warnings = 0;
+    path = "";
+    lines = [||];
+    color = false;
+  }
 
 let strip_cr line =
   let n = String.length line in
@@ -23,9 +32,21 @@ let setup path src color =
   st.lines <- split_lines src;
   st.color <- color
 
+(* With --warnings-as-errors, a warning is reported as an error, with a note
+   saying why. *)
 let report (d : Diag.diagnostic) =
+  let d =
+    if d.severity = Diag.Warning && Options.v.warnings_as_errors then
+      Diag.with_note
+        { d with severity = Diag.Error }
+        "Reported as an error because of --warnings-as-errors"
+    else d
+  in
   st.diags <- d :: st.diags;
-  if d.severity = Diag.Error then st.errors <- st.errors + 1
+  match d.severity with
+  | Diag.Error -> st.errors <- st.errors + 1
+  | Diag.Warning -> st.warnings <- st.warnings + 1
+  | Diag.Panic -> ()
 
 let error_count () = st.errors
 
@@ -63,8 +84,11 @@ let print_all () =
   let sorted = List.stable_sort compare_position (List.rev st.diags) in
   let rendered = List.map render_one sorted in
   prerr_string (String.concat "\n" rendered);
-  if st.errors > 0 then
-    prerr_string ("\n" ^ Render.summary st.color st.path st.errors)
+  if st.diags <> [] then
+    prerr_string ("\n" ^ Render.summary st.color st.path st.errors st.warnings);
+  (* Warnings come before anything the compiled program prints. *)
+  flush stderr;
+  st.diags <- []
 
 (* Between phases: if anything went wrong, print it all and stop. *)
 let stop_if_errors () =
@@ -72,3 +96,6 @@ let stop_if_errors () =
     print_all ();
     exit 1
   end
+
+(* After the last phase that reports: print any warnings, and go on. *)
+let print_warnings () = if st.diags <> [] then print_all ()

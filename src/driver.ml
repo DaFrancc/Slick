@@ -1,8 +1,9 @@
 (* Runs the phases and the C compiler. Command-line parsing is in bin/main.ml. *)
 
 let usage =
-  "Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]\n\
-  \       slick run FILE [--color=WHEN]\n"
+  "Usage: slick build FILE [-o OUT] [--emit-c] [OPTIONS]\n\
+  \       slick run FILE [OPTIONS]\n\
+   Options: --color=WHEN  --warn-implicit-conversions  --warnings-as-errors\n"
 
 type color_choice = Auto | Always | Never
 
@@ -62,6 +63,7 @@ let compile_to_c path =
   Report.stop_if_errors ();
   Check.check_file file;
   Report.stop_if_errors ();
+  Report.print_warnings ();
   Emit_c.emit_file file
 
 let env_or name default =

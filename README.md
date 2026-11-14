@@ -13,25 +13,44 @@ main.slick → lex → parse → check → emit C → cc → ./main
 
 ## Status
 
-Milestones 0 and 0.5 are done: `i32` and `bool`, local declarations with
-`mut`, assignment and compound assignment, arithmetic, comparison and logical
-operators, `if`/`else`, `while`, functions with parameters, `return` and
-recursion, a built-in `print(i32)`, and Rust-style error messages.
+Milestones 0, 0.5 and 1 are done:
+
+- **Types:** `i8` to `i64`, `u8` to `u64`, `f32`, `f64` and `bool`. Literals
+  take their type from context, narrower values widen implicitly when nothing
+  can be lost, and `cast(T, x)` and `bitcast(T, x)` do the rest.
+- **Structs:** declared at the top level, built with named, positional or
+  `.{ }` literals, and passed and returned by value.
+- **Pointers:** `*T` and `*mut T`, `&x` and `&mut x`, and `*p`. Field access
+  goes through a pointer by itself.
+- **Operators:** arithmetic, comparison and logical operators, plus the
+  bitwise ones with Go's precedence, so `flags & MASK == 0` means what it
+  says. Evaluation is strictly left to right.
+- **Statements:** local declarations with `mut`, assignment and compound
+  assignment, `if`/`else`, `while`, and functions with parameters, `return`
+  and recursion.
+- **Output:** a built-in `print` for every number type and `bool`. Floats
+  print as the shortest text that reads back exactly, and `print(x, 2)` prints
+  two digits after the point.
+- **Diagnostics:** Rust-style error messages, and an opt-in warning for
+  implicit conversions.
 
 ```
-fib :: fn(n: i32) -> i32 {
-    if n < 2 { return n; }
-    return fib(n - 1) + fib(n - 2);
+Vec2 :: struct { x, y: f32 }
+
+step :: fn(pos: *mut Vec2, vel: Vec2, dt: f32) {
+    pos.x += vel.x * dt;
+    pos.y += vel.y * dt;
 }
 
 main :: fn() {
-    i : mut = 0;
-    while i < 10 {
-        print(fib(i));
-        i += 1;
-    }
+    p : mut = Vec2{ 0, 10 };
+    step(&mut p, .{ 2, -1 }, 0.5);
+    print(p.x);   // 1.0
+    print(p.y);   // 9.5
 }
 ```
+
+See `examples/` for more.
 
 ## Prerequisites
 
@@ -56,8 +75,8 @@ output directly.
 ## Usage
 
 ```
-slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
-slick run FILE [--color=WHEN]
+slick build FILE [-o OUT] [--emit-c] [OPTIONS]
+slick run FILE [OPTIONS]
 ```
 
 - `slick build main.slick` writes the executable `./main`, or `OUT` with `-o`.
@@ -67,6 +86,9 @@ slick run FILE [--color=WHEN]
   its exit code.
 - `--color=auto|always|never` controls color in error messages. `auto`, the
   default, colors only when writing to a terminal.
+- `--warn-implicit-conversions` warns about every implicit conversion, such
+  as an `i32` passed where an `i64` is expected.
+- `--warnings-as-errors` turns every warning into an error.
 
 Environment variables:
 
@@ -120,6 +142,7 @@ always a bug in slick, and the C file is kept so it can be inspected.
 | `src/render.ml` | Diagnostics to text: excerpts, labels, color |
 | `src/report.ml` | Collects diagnostics and prints them |
 | `src/suggest.ml` | "Did you mean" suggestions |
+| `src/options.ml` | Command-line settings the phases read |
 | `test/*.t` | Cram tests: each runs real programs through `slick` |
 | `examples/` | Example programs |
 | `plans/` | Implementation plans per milestone |

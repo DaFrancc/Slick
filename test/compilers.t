@@ -72,3 +72,10 @@ when both compilers are installed.
   $ diff gcc_fib.out clang_fib.out
   $ paste -s -d ' ' gcc_fib.out
   0 1 1 2 3 5 8 13 21 34
+
+The same for the particles example, which uses floats and every kind of
+conversion.
+
+  $ CC=gcc slick run ../examples/particles.slick > gcc_particles.out
+  $ CC=clang slick run ../examples/particles.slick > clang_particles.out
+  $ diff gcc_particles.out clang_particles.out

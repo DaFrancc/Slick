@@ -193,3 +193,69 @@ An else-if condition only runs when the branches before it were not taken.
   6
   7
   80
+
+Struct literal fields are evaluated in the order they are written, not the
+order the struct declares them.
+
+  $ cat > fields.slick <<'EOF'
+  > V :: struct { a, b, c: i32 }
+  > noisy :: fn(n: i32) -> i32 { print(n); return n; }
+  > main :: fn() {
+  >     v := V{ c = noisy(1), a = noisy(2), b = noisy(3) };
+  >     print(v.a * 100 + v.b * 10 + v.c);
+  > }
+  > EOF
+  $ slick run fields.slick
+  1
+  2
+  3
+  231
+
+A call can change a variable through a pointer, so a value read before the
+call is saved first. In 'x += f(&mut x)' the old x is read before the call,
+as in 'x = x + f(&mut x)'.
+
+  $ cat > through.slick <<'EOF'
+  > bump :: fn(p: *mut i32) -> i32 { *p += 10; return 1; }
+  > main :: fn() {
+  >     x : mut = 1;
+  >     y := x + bump(&mut x);
+  >     print(y);
+  >     print(x);
+  >     z : mut = 1;
+  >     z += bump(&mut z);
+  >     print(z);
+  >     w : mut = 1;
+  >     p := &mut w;
+  >     v := *p + bump(p);
+  >     print(v);
+  > }
+  > EOF
+  $ slick run through.slick
+  2
+  11
+  2
+  2
+
+The target of an assignment is evaluated before the value.
+
+  $ cat > target.slick <<'EOF'
+  > V :: struct { a: i32 }
+  > noisy :: fn(n: i32) -> i32 { print(n); return n; }
+  > pick :: fn(p: *mut V) -> *mut V { print(100); return p; }
+  > main :: fn() {
+  >     v : mut = V{ a = 0 };
+  >     pick(&mut v).a = noisy(1);
+  >     *pick(&mut v) = V{ a = noisy(2) };
+  >     pick(&mut v).a += noisy(3);
+  >     print(v.a);
+  > }
+  > EOF
+  $ slick run target.slick
+  100
+  1
+  100
+  2
+  100
+  3
+  5

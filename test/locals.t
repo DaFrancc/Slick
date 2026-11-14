@@ -466,7 +466,7 @@ Types must match.
   > }
   > EOF
   $ slick run compound_bool.slick
-  Error: Operator '+=' expects i32 operands, found bool and i32
+  Error: Operator '+=' expects numbers, found bool and i32
    --> compound_bool.slick:3:7
     |
   3 |     b += 1;
@@ -508,12 +508,13 @@ Declaration errors.
   2 |     x : Foo;
     |         ^^^ Not a type
     |
-  Note: The types available now are i32 and bool
+  Note: The built-in types are i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 and bool
   
   Error: Could not compile 'unknown_type.slick' due to 1 error
   [1]
 
-Only names can be assigned to.
+Only places in memory can be assigned to: variables, their fields, and what
+pointers point to.
 
   $ cat > assign_literal.slick <<'EOF'
   > main :: fn() {
@@ -525,9 +526,9 @@ Only names can be assigned to.
    --> assign_literal.slick:2:5
     |
   2 |     1 = 2;
-    |     ^ Not a name
+    |     ^ Not a place in memory
     |
-  Note: Only local names can be assigned to
+  Note: Only variables, their fields, and what pointers point to can be assigned to
   
   Error: Could not compile 'assign_literal.slick' due to 1 error
   [1]

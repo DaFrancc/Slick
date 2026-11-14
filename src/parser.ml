@@ -17,6 +17,9 @@ type parser = {
   toks : Token.t array;
   mutable pos : int;
   mutable panicking : bool;
+  (* Set while parsing an 'if' or 'while' condition, where 'Name {' starts
+     the body, not a struct literal. Parentheses clear it again. *)
+  mutable no_struct_lit : bool;
 }
 
 let peek p = p.toks.(p.pos)
@@ -53,11 +56,11 @@ let expected_error p what =
 
 let fail_expected p what = syntax_error p (expected_error p what)
 
-(* At the top level, where only function definitions are allowed so far. *)
+(* At the top level, where only functions and structs are allowed so far. *)
 let fail_top_level p what =
   syntax_error p
     (Diag.with_note (expected_error p what)
-       "Only functions can be defined at the top level for now")
+       "Only functions and structs can be defined at the top level for now")
 
 (* On a mismatch, reports and returns the current token without consuming
    it. *)
@@ -192,14 +195,42 @@ let synchronize_top p start =
   done;
   p.panicking <- false
 
-let mk_expr kind span = { kind; span; ty = Void }
+let mk_expr kind span = { kind; span; ty = Void; conv = None }
 
 (* What stands in for an expression that could not be parsed. *)
-let placeholder p = mk_expr (Int 0) (peek p).span
+let placeholder p = mk_expr (Int { value = 0L; neg = false }) (peek p).span
 
-let parse_type p =
-  let tok = expect_ident p "a type" in
-  { t_name = tok.text; t_span = tok.span }
+(* Type := '*' 'mut'? Type | Name *)
+let rec parse_type p =
+  match peek_kind p with
+  | Token.Star ->
+      let star = advance p in
+      let is_mut =
+        if peek_kind p = Token.Mut then begin
+          ignore (advance p);
+          true
+        end
+        else false
+      in
+      let inner = parse_type p in
+      {
+        t_kind = Pointer (is_mut, inner);
+        t_span = Diag.join star.span inner.t_span;
+      }
+  | _ ->
+      let tok = expect_ident p "a type" in
+      { t_kind = Named tok.text; t_span = tok.span }
+
+let starts_type kind =
+  match kind with Token.Ident _ | Token.Star -> true | _ -> false
+
+(* Parses with struct literals allowed or not, restoring the setting. *)
+let with_struct_lits p allowed parse =
+  let saved = p.no_struct_lit in
+  p.no_struct_lit <- not allowed;
+  let result = parse p in
+  p.no_struct_lit <- saved;
+  result
 
 (* ---- Expressions, lowest precedence first ---- *)
 
@@ -213,14 +244,24 @@ let comparison_op kind =
   | Token.Ge -> Some Ge
   | _ -> None
 
+(* Go's precedence: '|' and '^' bind like '+', and '<<', '>>' and '&' like
+   '*', so all of them bind tighter than comparisons. *)
 let additive_op kind =
-  match kind with Token.Plus -> Some Add | Token.Minus -> Some Sub | _ -> None
+  match kind with
+  | Token.Plus -> Some Add
+  | Token.Minus -> Some Sub
+  | Token.Pipe -> Some Bor
+  | Token.Caret -> Some Bxor
+  | _ -> None
 
 let multiplicative_op kind =
   match kind with
   | Token.Star -> Some Mul
   | Token.Slash -> Some Div
   | Token.Percent -> Some Rem
+  | Token.Amp -> Some Band
+  | Token.Shl -> Some Shl
+  | Token.Shr -> Some Shr
   | _ -> None
 
 (* 'a < b < c': suggest 'a < b && b < c', repeating the middle operand. *)
@@ -320,30 +361,80 @@ and parse_unary p =
       (* '-' directly before a literal folds into a negative literal, which
          is how -2147483648 is written. *)
       match peek_kind p with
-      | Token.Int n ->
+      | Token.Int value ->
           let lit = advance p in
-          mk_expr (Int (-n)) (Diag.join tok.span lit.span)
+          mk_expr (Int { value; neg = true }) (Diag.join tok.span lit.span)
+      | Token.Float text ->
+          let lit = advance p in
+          mk_expr (Float { text; fneg = true }) (Diag.join tok.span lit.span)
       | _ ->
           let x = parse_unary p in
           mk_expr (Unary (Neg, x)) (Diag.join tok.span x.span))
   | Token.Bang ->
-      ignore (advance p);
-      let x = parse_unary p in
+      let x = parse_operand p in
       mk_expr (Unary (Not, x)) (Diag.join tok.span x.span)
-  | _ -> parse_primary p
+  | Token.Tilde ->
+      let x = parse_operand p in
+      mk_expr (Unary (Bnot, x)) (Diag.join tok.span x.span)
+  | Token.Star ->
+      let x = parse_operand p in
+      mk_expr (Deref x) (Diag.join tok.span x.span)
+  | Token.Amp ->
+      let is_mut = peek2_kind p = Token.Mut in
+      if is_mut then ignore (advance p);
+      let x = parse_operand p in
+      mk_expr (Addr_of (is_mut, x)) (Diag.join tok.span x.span)
+  | Token.AndAnd ->
+      (* The lexer reads '&&x' as one token; here it means '&(&x)'. *)
+      let x = parse_operand p in
+      let whole = Diag.join tok.span x.span in
+      let inner =
+        mk_expr
+          (Addr_of (false, x))
+          { whole with start_col = whole.start_col + 1 }
+      in
+      mk_expr (Addr_of (false, inner)) whole
+  | _ -> parse_postfix p (parse_primary p)
+
+(* Skips a prefix operator and parses what it applies to. *)
+and parse_operand p =
+  ignore (advance p);
+  parse_unary p
+
+(* '.field', any number of times. *)
+and parse_postfix p e =
+  if peek_kind p = Token.Dot then (
+    match peek2_kind p with
+    | Token.Ident field ->
+        ignore (advance p);
+        let f = advance p in
+        parse_postfix p
+          (mk_expr
+             (Field { obj = e; field; field_span = f.span; through_ptr = false })
+             (Diag.join e.span f.span))
+    | _ ->
+        ignore (advance p);
+        fail_expected p "a field name";
+        e)
+  else e
 
 and parse_primary p =
   let tok = peek p in
   match tok.kind with
-  | Token.Int n ->
+  | Token.Int value ->
       ignore (advance p);
-      mk_expr (Int n) tok.span
+      mk_expr (Int { value; neg = false }) tok.span
+  | Token.Float text ->
+      ignore (advance p);
+      mk_expr (Float { text; fneg = false }) tok.span
   | Token.True ->
       ignore (advance p);
       mk_expr (Bool_lit true) tok.span
   | Token.False ->
       ignore (advance p);
       mk_expr (Bool_lit false) tok.span
+  | Token.Ident ("cast" | "bitcast") when peek2_kind p = Token.LParen ->
+      parse_cast p
   | Token.Ident name ->
       ignore (advance p);
       if peek_kind p = Token.LParen then begin
@@ -354,15 +445,96 @@ and parse_primary p =
           (Call { callee = name; callee_span = tok.span; args; args_span })
           (Diag.join tok.span args_span)
       end
+      else if peek_kind p = Token.LBrace && not p.no_struct_lit then
+        parse_struct_lit p (Some (name, tok.span)) tok.span
       else mk_expr (Var { var_name = name; var_sym = None }) tok.span
+  | Token.Dot when peek2_kind p = Token.LBrace ->
+      ignore (advance p);
+      parse_struct_lit p None tok.span
   | Token.LParen ->
       ignore (advance p);
-      let e = parse_expr p in
+      let e = with_struct_lits p true parse_expr in
       let close = expect_close_paren p in
       { e with span = Diag.join tok.span close.span }
   | _ ->
       fail_expected p "an expression";
       placeholder p
+
+(* 'cast(T, e)' or 'bitcast(T, e)'. The first argument is a type, which is
+   why these are parsed here rather than as calls. *)
+and parse_cast p =
+  let name = advance p in
+  ignore (advance p);
+  let kind = if name.text = "cast" then Convert else Bits in
+  let ann = parse_type p in
+  ignore (expect p Token.Comma "','");
+  let e = with_struct_lits p true parse_expr in
+  let close = expect_close_paren p in
+  mk_expr (Cast (kind, ann, e)) (Diag.join name.span close.span)
+
+(* At the '{' of 'Name{ ... }' or '.{ ... }'; [start] is the name or '.'. *)
+and parse_struct_lit p sl_name (start : Diag.span) =
+  let open_tok = advance p in
+  let sl_open = Diag.join start open_tok.span in
+  let items = with_struct_lits p true parse_all_lit_items in
+  mk_expr
+    (Struct_lit { sl_name; sl_open; items })
+    (Diag.join start (prev_span p))
+
+and parse_all_lit_items p = parse_lit_items p []
+
+(* After the '{' or a ','. Consumes the '}'. *)
+and parse_lit_items p acc =
+  if peek_kind p = Token.RBrace then begin
+    ignore (advance p);
+    List.rev acc
+  end
+  else begin
+    let item =
+      match (peek_kind p, peek2_kind p) with
+      | Token.Ident name, Token.Assign ->
+          let tok = advance p in
+          ignore (advance p);
+          { i_name = Some (name, tok.span); i_value = parse_expr p }
+      | _ -> { i_name = None; i_value = parse_expr p }
+    in
+    let acc = item :: acc in
+    if p.panicking then begin
+      skip_literal p;
+      List.rev acc
+    end
+    else
+      match peek_kind p with
+      | Token.Comma ->
+          ignore (advance p);
+          parse_lit_items p acc
+      | Token.RBrace ->
+          ignore (advance p);
+          List.rev acc
+      | _ ->
+          fail_expected p "',' or '}'";
+          skip_literal p;
+          List.rev acc
+  end
+
+(* After an error inside a struct literal: skip past its '}', so that the
+   statement's recovery does not take that '}' for the end of the block. A
+   ';' outside any braces ends the skipping without being consumed. *)
+and skip_literal p =
+  let depth = ref 0 in
+  let stop = ref false in
+  while not !stop do
+    match peek_kind p with
+    | Token.Eof -> stop := true
+    | Token.Semi when !depth = 0 -> stop := true
+    | Token.LBrace ->
+        incr depth;
+        ignore (advance p)
+    | Token.RBrace ->
+        ignore (advance p);
+        if !depth = 0 then stop := true else decr depth
+    | _ -> ignore (advance p)
+  done
 
 (* After the '('. Consumes the ')'. *)
 and parse_args p =
@@ -373,7 +545,7 @@ and parse_args p =
   else parse_args_rest p []
 
 and parse_args_rest p acc =
-  let e = parse_expr p in
+  let e = with_struct_lits p true parse_expr in
   let acc = e :: acc in
   if peek_kind p = Token.Comma then begin
     ignore (advance p);
@@ -394,6 +566,11 @@ let assign_op kind =
   | Token.StarAssign -> Some (Some Mul)
   | Token.SlashAssign -> Some (Some Div)
   | Token.PercentAssign -> Some (Some Rem)
+  | Token.AmpAssign -> Some (Some Band)
+  | Token.PipeAssign -> Some (Some Bor)
+  | Token.CaretAssign -> Some (Some Bxor)
+  | Token.ShlAssign -> Some (Some Shl)
+  | Token.ShrAssign -> Some (Some Shr)
   | _ -> None
 
 (* A statement from [start] to the last token consumed. *)
@@ -455,7 +632,7 @@ and parse_stmt p =
       mk_stmt p (If ifs) tok.span
   | Token.While ->
       ignore (advance p);
-      let w_cond = parse_expr p in
+      let w_cond = with_struct_lits p false parse_expr in
       let w_body = parse_block p in
       mk_stmt p (While { w_cond; w_body }) tok.span
   | Token.Return -> parse_return p
@@ -469,7 +646,7 @@ and parse_stmt p =
 
 (* After the 'if'. *)
 and parse_if p =
-  let cond = parse_expr p in
+  let cond = with_struct_lits p false parse_expr in
   let then_block = parse_block p in
   if peek_kind p = Token.Else then begin
     ignore (advance p);
@@ -508,7 +685,7 @@ and parse_decl p =
   in
   let d_ann =
     match peek_kind p with
-    | Token.Ident _ when not d_colon_eq -> Some (parse_type p)
+    | kind when starts_type kind && not d_colon_eq -> Some (parse_type p)
     | _ -> None
   in
   let d_init =
@@ -550,15 +727,8 @@ and parse_simple p =
   let e = parse_expr p in
   match assign_op (peek_kind p) with
   | Some a_op ->
+      (* Whether the target can be assigned to is up to the checker. *)
       let op_tok = advance p in
-      (match e.kind with
-      | Var _ -> ()
-      | _ ->
-          soft_error p
-            (Diag.with_note
-               (Diag.error e.span "Cannot assign to this expression"
-                  "Not a name")
-               "Only local names can be assigned to"));
       let value = parse_expr p in
       expect_semi p;
       mk_stmt p
@@ -602,6 +772,7 @@ and keyword_like name =
       ("fn", 5);
       ("true", 6);
       ("false", 7);
+      ("struct", 8);
     ]
 
 and misspelled_keyword p e name =
@@ -687,9 +858,73 @@ let recover_in_signature p kind =
   if kind <> Token.LBrace && peek_kind p = kind then ignore (advance p);
   p.panicking <- false
 
+(* ---- Structs ---- *)
+
+type item = Func_item of func | Struct_item of struct_decl
+
+(* A leading 'mut' on a field is reported and skipped. *)
+let skip_field_mut p =
+  if peek_kind p = Token.Mut then begin
+    let tok = advance p in
+    let d = Diag.error tok.span "Fields cannot be declared 'mut'" "" in
+    let d = Diag.with_note d "A field is mutable when its struct is" in
+    let delete = { tok.span with end_col = (peek p).span.start_col } in
+    let delete =
+      if (peek p).span.start_line = tok.span.start_line then delete
+      else tok.span
+    in
+    soft_error p (Diag.with_help d "Remove it" [ Diag.edit delete "" ])
+  end
+
+let make_field fd_ann (tok : Token.t) =
+  { fd_name = tok.text; fd_span = tok.span; fd_ann; fd_ty = Err }
+
+(* One group, like 'x, y: f32'. *)
+let parse_field_group p =
+  let names = ref [ expect_ident p "a field name" ] in
+  while (not p.panicking) && peek_kind p = Token.Comma do
+    ignore (advance p);
+    names := expect_ident p "a field name" :: !names
+  done;
+  ignore (expect p Token.Colon "':'");
+  skip_field_mut p;
+  let ann = parse_type p in
+  List.rev_map (make_field ann) !names
+
+(* After the '{'. Consumes the '}'. Groups are separated by ',', and a ','
+   may follow the last one. *)
+let rec parse_fields p acc =
+  if peek_kind p = Token.RBrace then begin
+    ignore (advance p);
+    List.rev acc
+  end
+  else begin
+    let acc = List.rev_append (parse_field_group p) acc in
+    if p.panicking then List.rev acc
+    else
+      match peek_kind p with
+      | Token.Comma ->
+          ignore (advance p);
+          parse_fields p acc
+      | Token.RBrace ->
+          ignore (advance p);
+          List.rev acc
+      | _ ->
+          fail_expected p "',' or '}'";
+          List.rev acc
+  end
+
+(* After 'Name :: struct'. *)
+let parse_struct p (name : Token.t) =
+  ignore (expect p Token.LBrace "'{'");
+  let s_fields = if p.panicking then [] else parse_fields p [] in
+  { s_name = name.text; s_name_span = name.span; s_fields }
+
+(* ---- Functions ---- *)
+
 (* Returns None if the definition is broken before its parameter list; the
    caller then skips to the next definition. *)
-let parse_func p =
+let parse_item p =
   let name = advance p in
   if peek_kind p <> Token.ColonColon then begin
     fail_top_level p "'::'";
@@ -697,8 +932,12 @@ let parse_func p =
   end
   else begin
     ignore (advance p);
-    if peek_kind p <> Token.Fn then begin
-      fail_top_level p "'fn'";
+    if peek_kind p = Token.Struct then begin
+      ignore (advance p);
+      Some (Struct_item (parse_struct p name))
+    end
+    else if peek_kind p <> Token.Fn then begin
+      fail_top_level p "'fn' or 'struct'";
       None
     end
     else begin
@@ -723,37 +962,48 @@ let parse_func p =
       if p.panicking then recover_in_signature p Token.LBrace;
       let body = parse_block p in
       Some
-        {
-          f_name = name.text;
-          f_name_span = name.span;
-          params;
-          params_span;
-          ret_ann;
-          body;
-          param_tys = [];
-          ret_ty = Void;
-          nsyms = 0;
-        }
+        (Func_item
+           {
+             f_name = name.text;
+             f_name_span = name.span;
+             params;
+             params_span;
+             ret_ann;
+             body;
+             param_tys = [];
+             ret_ty = Void;
+             nsyms = 0;
+           })
     end
   end
 
-let rec parse_funcs p acc =
+let rec parse_items p acc =
   match peek_kind p with
   | Token.Eof -> List.rev acc
   | Token.Semi ->
       stray_semi p true;
-      parse_funcs p acc
+      parse_items p acc
   | Token.Ident _ ->
       let start = p.pos in
-      let acc = match parse_func p with Some f -> f :: acc | None -> acc in
+      let acc =
+        match parse_item p with Some item -> item :: acc | None -> acc
+      in
       if p.panicking then synchronize_top p start;
-      parse_funcs p acc
+      parse_items p acc
   | _ ->
       let start = p.pos in
-      fail_top_level p "a function definition";
+      fail_top_level p "a function or struct definition";
       synchronize_top p start;
-      parse_funcs p acc
+      parse_items p acc
+
+let struct_of item = match item with Struct_item s -> Some s | _ -> None
+let func_of item = match item with Func_item f -> Some f | _ -> None
 
 let parse_file path toks =
-  let p = { toks; pos = 0; panicking = false } in
-  { path; funcs = parse_funcs p [] }
+  let p = { toks; pos = 0; panicking = false; no_struct_lit = false } in
+  let items = parse_items p [] in
+  {
+    path;
+    structs = List.filter_map struct_of items;
+    funcs = List.filter_map func_of items;
+  }

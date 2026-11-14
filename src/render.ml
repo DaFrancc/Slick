@@ -377,11 +377,21 @@ let render lines color (d : diagnostic) =
   List.iter (emit_help lay) d.helps;
   Buffer.contents lay.out
 
-let summary color path errors =
-  let count =
-    if errors = 1 then "1 error" else string_of_int errors ^ " errors"
-  in
-  paint color bold_red "Error"
-  ^ paint color bold
-      (Printf.sprintf ": Could not compile '%s' due to %s" path count)
-  ^ "\n"
+let count n word =
+  if n = 1 then "1 " ^ word else string_of_int n ^ " " ^ word ^ "s"
+
+let summary color path errors warnings =
+  if errors > 0 then
+    let also =
+      if warnings > 0 then "; " ^ count warnings "warning" ^ " emitted" else ""
+    in
+    paint color bold_red "Error"
+    ^ paint color bold
+        (Printf.sprintf ": Could not compile '%s' due to %s%s" path
+           (count errors "error") also)
+    ^ "\n"
+  else
+    paint color bold_yellow "Warning"
+    ^ paint color bold
+        (Printf.sprintf ": '%s' generated %s" path (count warnings "warning"))
+    ^ "\n"

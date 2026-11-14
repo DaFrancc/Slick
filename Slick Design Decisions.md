@@ -53,6 +53,8 @@ v := Vec3{ 1, 2, 3 };                // positional only when every field is give
 
 When the type is known from context, a literal can drop it with `.{ }`, matching `.Ok(v)` for enum variants: `spawn(.{ 1, 2, 0 }, .{ 0, 5, 0 });`, `t : Turret = .{ owner = &player };`. Only allowed where the type is unambiguous.
 
+A struct literal directly in an `if` or `while` condition needs parentheses, since `if x == Foo { ... }` could otherwise end the condition at `Foo` or not. Rust and Go have the same rule.
+
 A function pointer's type is the `fn` signature itself, with no `*`: a value of that type already holds the address of the code.
 
 ```
@@ -122,13 +124,17 @@ c : i16 = a;     // error: needs an explicit cast
 d : u32 = a;     // error: could lose the sign
 ```
 
-A compiler flag, `-warn-implicit-conversions`, warns on every implicit conversion, including lossless ones.
+Integers never convert to floats implicitly, even when the value would be exact; an integer literal can still take a float type (`health : f32 = 100;`). In a binary operator, the narrower operand widens to the other's type when that is lossless (`i32 + i64` is `i64`); otherwise, as in `u32 + i32`, a cast is needed.
+
+A compiler flag, `--warn-implicit-conversions`, warns on every implicit conversion, including lossless ones. `--warnings-as-errors` turns every warning into an error.
+
+Integer literals can be written in hexadecimal (`0xFF`) and binary (`0b1010`). Float literals need digits on both sides of the point (`4.5`, not `4.` or `.5`) and can have an exponent (`2.5e-3`).
 
 Explicit casts use a builtin function, chosen because every cast is easy to grep for: `c := cast(i16, a);`.
 
-`cast` converts the value (`cast(u32, 1.5)` is `1`). `bitcast` reinterprets the raw bits and only works between types of the same size: `bitcast(u32, 1.5)` is `0x3FC00000`.
+`cast` converts the value (`cast(u32, 1.5)` is `1`); from a float to an integer it saturates, so out-of-range values give the type's minimum or maximum and NaN gives 0. `bitcast` reinterprets the raw bits and only works between types of the same size: `bitcast(u32, 1.5)` is `0x3FC00000`.
 
-Integer overflow panics with the file and line in debug builds and wraps around in release builds. Until there are debug and release builds, it always wraps. Integer division truncates toward zero, and dividing by zero panics in every build.
+Integer overflow panics with the file and line in debug builds and wraps around in release builds. Until there are debug and release builds, it always wraps. Integer division truncates toward zero, and dividing by zero panics in every build. `%` works on integers only for now.
 
 ## Arrays and slices
 
@@ -179,6 +185,17 @@ c := a + b;
 - Overloadable: `+ - * /`, comparisons (`==`, `<`, and so on), and `[]`.
 - `Vec3`, `Mat4`, `Quat` and other math types are library types built this way, not built into the compiler.
 
+Bitwise operators follow Go's precedence rather than C's: `<<`, `>>` and `&` bind like `*`, while `|` and `^` bind like `+`, and all of them bind tighter than comparisons. So `flags & MASK == 0` means `(flags & MASK) == 0`, where C would read it as `flags & (MASK == 0)`. `~` is bitwise not. A shift amount wraps modulo the width of the shifted value, and `>>` on a signed value keeps the sign.
+
+| Precedence, highest first | Operators |
+| --- | --- |
+| Postfix | `f(...)` `.field` |
+| Prefix | `-` `!` `~` `*` `&` `&mut` |
+| Multiplicative | `*` `/` `%` `<<` `>>` `&` |
+| Additive | `+` `-` `\|` `^` |
+| Comparison (no chaining) | `==` `!=` `<` `<=` `>` `>=` |
+| Logical | `&&`, then `\|\|` |
+
 Evaluation is strictly left to right: call arguments, and the operands of every operator, whatever the precedence. In `a() + b() * c()`, the calls run as `a`, `b`, `c`. `&&` and `||` skip their right side when the left side decides the result. C leaves this order to the compiler, so the C backend fixes it with temporaries.
 
 Swizzles are ordinary library functions called with dot syntax, so they need no language feature: `xy :: fn(v: Vec3) -> Vec2 #pub { return .{ v.x, v.y }; }`, used as `pos.xy()`. The full set gets generated with `#run` once it exists.
@@ -223,7 +240,7 @@ r      : mut *mut Enemy;  // both
 - A leading `mut` is only allowed where a variable is declared: locals, parameters, loop variables. Struct fields take their mutability from the struct they live in.
 - `*T` is the pointer type. `&x` gives a `*T`, and `&mut x` gives a `*mut T` (`x` must be `mut`).
 - `foo : *mut i64 = &mut source;` is the full form; `foo := &mut source;` infers the same type.
-- Field access auto-dereferences (`p.health`). Writing through a plain pointer uses prefix `*`: `*foo = 10;`.
+- Field access auto-dereferences one level (`p.health`); through two pointers, write `(*pp).health`. Pointers compare with `==` and `!=` only. Writing through a plain pointer uses prefix `*`: `*foo = 10;`.
 - Pointers are non-null by default. `?*T` and `?*mut T` may be null and must be unwrapped with `if t := target { ... }`.
 - `?` applies to any type: `?i32` compiles to a value plus a has-value flag, while `?*T` stays a plain pointer.
 - Structs with non-null pointer fields must be initialized explicitly: `Turret{ owner = &player }`.
@@ -443,7 +460,7 @@ Milestones:
 
 0. Minimal Turing-complete core, pushed through the whole pipeline (lex, parse, type-check, emit C, call `cc`): `i32` and `bool`; `:=` and `: mut` declarations with the immutability check; assignment and `+=`; arithmetic, comparison and logical operators; `if`/`else`, `while`; functions with parameters, `return` and recursion; a built-in `print(i32)`. Test program: recursive `fib` printed for 0 to 9.
 0.5. Diagnostics: Rust-style errors with source excerpts, labels, suggested fixes and color, in sentence case, with every error in a file reported in one run.
-1. Compile a wider subset to C: structs, pointers, the remaining integer and float types.
+1. Compile a wider subset to C: structs, pointers, the remaining integer and float types, `cast` and `bitcast`, bitwise operators, and the first warning (`--warn-implicit-conversions`, with `--warnings-as-errors`). `print` takes every number type and `bool`, showing floats as the shortest text that reads back exactly, with an optional number of decimal places: `print(x, 2)`.
 2. C interop: call raylib or SDL and get Pong drawing.
 3. Signature features: generics, tagged unions, `Result` and `try`, allocator context.
 4. Attributes and the JSON reflection dump for the ECS bridge.
@@ -475,3 +492,7 @@ Milestones:
 - [x] Integer overflow: decided, panics in debug builds and wraps in release (see Primitive types).
 - [x] Evaluation order: decided, strictly left to right (see Operators).
 - [x] Error message style: decided, Rust-style excerpts in sentence case (see Diagnostics).
+- [x] Bitwise operators: decided, Go-style precedence, binding tighter than comparisons (see Operators).
+- [x] Mixed-type arithmetic: decided, the narrower operand widens when lossless (see Primitive types).
+- [x] Integer to float conversion: decided, never implicit (see Primitive types).
+- [x] Warning flags: decided, `--warn-implicit-conversions` and `--warnings-as-errors` (see Primitive types).

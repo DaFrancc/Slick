@@ -1,6 +1,9 @@
 type kind =
   | Ident of string
-  | Int of int (* at most 2147483648; the checker rejects that unless negated *)
+  (* The magnitude, read as unsigned: up to 18446744073709551615. A '-' in
+     front is a separate token; the parser folds it in. *)
+  | Int of Int64.t
+  | Float of string (* the source text without '_' *)
   (* keywords *)
   | Fn
   | Mut
@@ -10,6 +13,7 @@ type kind =
   | Return
   | True
   | False
+  | Struct
   (* punctuation *)
   | LParen
   | RParen
@@ -21,18 +25,30 @@ type kind =
   | ColonColon
   | ColonEq
   | Arrow
+  | Dot
   (* operators *)
   | Plus
   | Minus
   | Star
   | Slash
   | Percent
+  | Amp
+  | Pipe
+  | Caret
+  | Tilde
+  | Shl
+  | Shr
   | Assign
   | PlusAssign
   | MinusAssign
   | StarAssign
   | SlashAssign
   | PercentAssign
+  | AmpAssign
+  | PipeAssign
+  | CaretAssign
+  | ShlAssign
+  | ShrAssign
   | EqEq
   | NotEq
   | Lt

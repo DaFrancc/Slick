@@ -278,7 +278,7 @@ Keywords from later milestones are reserved now.
   Error: Could not compile 'reserved.slick' due to 1 error
   [1]
 
-Only function definitions are allowed at the top level for now.
+Only function and struct definitions are allowed at the top level for now.
 
   $ cat > toplevel.slick <<'EOF'
   > x := 5;
@@ -291,7 +291,7 @@ Only function definitions are allowed at the top level for now.
   1 | x := 5;
     |   ^^ Expected '::'
     |
-  Note: Only functions can be defined at the top level for now
+  Note: Only functions and structs can be defined at the top level for now
   
   Error: Could not compile 'toplevel.slick' due to 1 error
   [1]
@@ -301,13 +301,13 @@ Only function definitions are allowed at the top level for now.
   > main :: fn() { }
   > EOF
   $ slick run toplevel_const.slick
-  Error: Expected 'fn', found '1024'
+  Error: Expected 'fn' or 'struct', found '1024'
    --> toplevel_const.slick:1:8
     |
   1 | MAX :: 1024;
-    |        ^^^^ Expected 'fn'
+    |        ^^^^ Expected 'fn' or 'struct'
     |
-  Note: Only functions can be defined at the top level for now
+  Note: Only functions and structs can be defined at the top level for now
   
   Error: Could not compile 'toplevel_const.slick' due to 1 error
   [1]
@@ -333,13 +333,13 @@ Other parser errors use the form 'expected X, found Y'.
   > 5
   > EOF
   $ slick run top_number.slick
-  Error: Expected a function definition, found '5'
+  Error: Expected a function or struct definition, found '5'
    --> top_number.slick:1:1
     |
   1 | 5
-    | ^ Expected a function definition
+    | ^ Expected a function or struct definition
     |
-  Note: Only functions can be defined at the top level for now
+  Note: Only functions and structs can be defined at the top level for now
   
   Error: Could not compile 'top_number.slick' due to 1 error
   [1]

@@ -64,6 +64,9 @@ let error (span : span) message text =
     helps = [];
   }
 
+let warning (span : span) message text =
+  { (error span message text) with severity = Warning }
+
 (* An error about a whole file. *)
 let file_error file message =
   { severity = Error; message; file; labels = []; notes = []; helps = [] }

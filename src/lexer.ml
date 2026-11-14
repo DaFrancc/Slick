@@ -21,15 +21,12 @@ let reserved =
     "break";
     "continue";
     "match";
-    "struct";
     "enum";
     "defer";
     "errdefer";
     "try";
     "import";
     "as";
-    "cast";
-    "bitcast";
   ]
 
 (* The point at the current position. *)
@@ -100,6 +97,7 @@ let keyword_kind word =
   | "return" -> Some Return
   | "true" -> Some True
   | "false" -> Some False
+  | "struct" -> Some Struct
   | _ -> None
 
 let lex_word lx =
@@ -119,54 +117,141 @@ let lex_word lx =
   | Some kind -> push lx kind start_pos start
   | None -> push lx (Ident word) start_pos start
 
-let i32_range_note = "An i32 holds values from -2147483648 to 2147483647"
+let digit_value c =
+  if c >= '0' && c <= '9' then Char.code c - Char.code '0'
+  else if c >= 'a' && c <= 'f' then Char.code c - Char.code 'a' + 10
+  else if c >= 'A' && c <= 'F' then Char.code c - Char.code 'A' + 10
+  else 99
 
-(* Decimal digits with optional '_' separators. The value is accumulated by
-   hand, stopping once it is out of range, so no literal can overflow. *)
-let lex_int lx =
+let skip_while lx pred =
+  while (not (at_end lx)) && pred (peek_at lx 0) do
+    advance lx
+  done
+
+let is_digit_or_sep c = is_digit c || c = '_'
+let without_underscores text = String.concat "" (String.split_on_char '_' text)
+
+let base_name base =
+  match base with
+  | 16 -> "Only hexadecimal digits and '_' are allowed"
+  | 2 -> "Only 0, 1 and '_' are allowed"
+  | _ -> "Only digits and '_' are allowed"
+
+let invalid_literal lx start text what label =
+  Report.report
+    (Diag.error (since lx start)
+       (Printf.sprintf "Invalid %s literal '%s'" what text)
+       label)
+
+(* The digits of [text] from [from] on, in [base], as an unsigned 64-bit
+   value. The value is checked before each step, so it never overflows;
+   [None] means the literal is larger than any integer type. *)
+let int_value text from base =
+  let value = ref 0L in
+  let too_big = ref false in
+  let b = Int64.of_int base in
+  for i = from to String.length text - 1 do
+    let c = text.[i] in
+    if c <> '_' && not !too_big then begin
+      let d = Int64.of_int (digit_value c) in
+      let limit = Int64.unsigned_div (Int64.sub (-1L) d) b in
+      if Int64.unsigned_compare !value limit > 0 then too_big := true
+      else value := Int64.add (Int64.mul !value b) d
+    end
+  done;
+  if !too_big then None else Some !value
+
+(* An integer literal [text] whose digits start at [from]. A bad literal is
+   reported, then treated as 0. *)
+let finish_int lx start_pos start text from base =
+  let valid = ref (String.length text > from) in
+  let has_digit = ref false in
+  for i = from to String.length text - 1 do
+    let c = text.[i] in
+    if c = '_' then ()
+    else if digit_value c < base then has_digit := true
+    else valid := false
+  done;
+  if not (!valid && !has_digit) then begin
+    invalid_literal lx start text "integer"
+      (if !valid then "Expected digits after the prefix" else base_name base);
+    push lx (Int 0L) start_pos start
+  end
+  else
+    match int_value text from base with
+    | Some v -> push lx (Int v) start_pos start
+    | None ->
+        Report.report
+          (Diag.with_note
+             (Diag.error (since lx start)
+                (Printf.sprintf "Integer literal %s is too large" text)
+                "Larger than any integer type")
+             "The largest is u64, which holds up to 18446744073709551615");
+        push lx (Int 0L) start_pos start
+
+(* Decimal, '0x' hexadecimal or '0b' binary integers, and floats: digits, a
+   '.' and digits, then an optional exponent, or digits and an exponent.
+   Letters or digits glued to the end, as in '5x' or '1.5f', make the whole
+   literal invalid. *)
+let lex_number lx =
   let start_pos = lx.pos in
   let start = here lx in
-  while (not (at_end lx)) && is_ident_char (peek_at lx 0) do
-    advance lx
-  done;
-  let text = String.sub lx.src start_pos (lx.pos - start_pos) in
-  let value = ref 0 in
-  let too_big = ref false in
-  let valid = ref true in
-  for i = 0 to String.length text - 1 do
-    let c = text.[i] in
-    if is_digit c then
-      begin if not !too_big then begin
-        value := (!value * 10) + (Char.code c - Char.code '0');
-        if !value > 2147483648 then too_big := true
-      end
-      end
-    else if c <> '_' then valid := false
-  done;
-  (* A bad literal is reported, then treated as 0. *)
-  if not !valid then begin
-    Report.report
-      (Diag.with_note
-         (Diag.error (since lx start)
-            (Printf.sprintf "Invalid integer literal '%s'" text)
-            "Only digits and '_' are allowed")
-         "Hexadecimal, binary and float literals are not supported yet");
-    push lx (Int 0) start_pos start
+  let c1 = peek_at lx 1 in
+  if peek_at lx 0 = '0' && (c1 = 'x' || c1 = 'X' || c1 = 'b' || c1 = 'B') then begin
+    advance lx;
+    advance lx;
+    skip_while lx is_ident_char;
+    let text = String.sub lx.src start_pos (lx.pos - start_pos) in
+    finish_int lx start_pos start text 2
+      (if c1 = 'x' || c1 = 'X' then 16 else 2)
   end
-  else if !too_big then begin
-    Report.report
-      (Diag.with_note
-         (Diag.error (since lx start)
-            (Printf.sprintf "Integer literal %s does not fit in i32" text)
-            "Too large")
-         i32_range_note);
-    push lx (Int 0) start_pos start
+  else begin
+    skip_while lx is_digit_or_sep;
+    let is_float = ref false in
+    if peek_at lx 0 = '.' && is_digit (peek_at lx 1) then begin
+      is_float := true;
+      advance lx;
+      skip_while lx is_digit_or_sep
+    end;
+    let e = peek_at lx 0 in
+    let sign = peek_at lx 1 in
+    if
+      (e = 'e' || e = 'E')
+      && (is_digit sign
+         || ((sign = '+' || sign = '-') && is_digit (peek_at lx 2)))
+    then begin
+      is_float := true;
+      advance lx;
+      if sign = '+' || sign = '-' then advance lx;
+      skip_while lx is_digit_or_sep
+    end;
+    let tail = lx.pos in
+    skip_while lx is_ident_char;
+    let text = String.sub lx.src start_pos (lx.pos - start_pos) in
+    if !is_float then
+      if lx.pos > tail then begin
+        invalid_literal lx start text "float"
+          "Only digits, '.', '_' and an exponent are allowed";
+        push lx (Int 0L) start_pos start
+      end
+      else push lx (Float (without_underscores text)) start_pos start
+    else finish_int lx start_pos start text 0 10
   end
-  else push lx (Int !value) start_pos start
 
-(* Two-character operators are matched before one-character ones. *)
+(* Longer operators are matched before shorter ones. *)
+let three_char_kind a b c =
+  match (a, b, c) with
+  | '<', '<', '=' -> Some ShlAssign
+  | '>', '>', '=' -> Some ShrAssign
+  | _ -> None
+
 let two_char_kind a b =
   match (a, b) with
+  | '<', '<' -> Some Shl
+  | '>', '>' -> Some Shr
+  | '&', '=' -> Some AmpAssign
+  | '|', '=' -> Some PipeAssign
+  | '^', '=' -> Some CaretAssign
   | ':', ':' -> Some ColonColon
   | ':', '=' -> Some ColonEq
   | '-', '>' -> Some Arrow
@@ -201,12 +286,17 @@ let one_char_kind c =
   | '<' -> Some Lt
   | '>' -> Some Gt
   | '!' -> Some Bang
+  | '.' -> Some Dot
+  | '&' -> Some Amp
+  | '|' -> Some Pipe
+  | '^' -> Some Caret
+  | '~' -> Some Tilde
   | _ -> None
 
 (* A character the language does not use: reported and skipped. Its span
    covers the whole character, continuation bytes included, so one non-ASCII
    character gives one error. *)
-let unexpected_char lx start c prev =
+let unexpected_char lx start c =
   advance lx;
   while (not (at_end lx)) && is_continuation (peek_at lx 0) do
     advance lx
@@ -221,32 +311,28 @@ let unexpected_char lx start c prev =
         (Diag.error span (Printf.sprintf "Unexpected byte 0x%02X" code) "")
         "Only comments can contain characters outside ASCII"
   in
-  let d =
-    if c = '&' then Diag.with_help d "Use '&&' for logical and" []
-    else if c = '|' then Diag.with_help d "Use '||' for logical or" []
-    else if c = '.' && is_digit prev then
-      Diag.with_note d "Float literals are not supported yet"
-    else d
-  in
   Report.report d
 
-let lex_punct lx =
+(* Consumes an [n]-character operator and pushes its token. *)
+let take lx n kind =
   let start_pos = lx.pos in
   let start = here lx in
+  for _ = 1 to n do
+    advance lx
+  done;
+  push lx kind start_pos start
+
+let lex_punct lx =
   let c = peek_at lx 0 in
-  match two_char_kind c (peek_at lx 1) with
-  | Some kind ->
-      advance lx;
-      advance lx;
-      push lx kind start_pos start
+  match three_char_kind c (peek_at lx 1) (peek_at lx 2) with
+  | Some kind -> take lx 3 kind
   | None -> (
-      match one_char_kind c with
-      | Some kind ->
-          advance lx;
-          push lx kind start_pos start
-      | None ->
-          let prev = if lx.pos > 0 then lx.src.[lx.pos - 1] else ' ' in
-          unexpected_char lx start c prev)
+      match two_char_kind c (peek_at lx 1) with
+      | Some kind -> take lx 2 kind
+      | None -> (
+          match one_char_kind c with
+          | Some kind -> take lx 1 kind
+          | None -> unexpected_char lx (here lx) c))
 
 let rec lex_all lx =
   skip_trivia lx;
@@ -254,7 +340,7 @@ let rec lex_all lx =
   else begin
     let c = peek_at lx 0 in
     if is_ident_start c then lex_word lx
-    else if is_digit c then lex_int lx
+    else if is_digit c then lex_number lx
     else lex_punct lx;
     lex_all lx
   end

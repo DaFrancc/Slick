@@ -6,26 +6,30 @@ C compiler failure with 3.
 No arguments, an unknown command, or a missing file name prints the usage.
 
   $ slick
-  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
-         slick run FILE [--color=WHEN]
+  Usage: slick build FILE [-o OUT] [--emit-c] [OPTIONS]
+         slick run FILE [OPTIONS]
+  Options: --color=WHEN  --warn-implicit-conversions  --warnings-as-errors
   [2]
 
   $ slick frobnicate x.slick
   Error: Unknown command 'frobnicate'
-  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
-         slick run FILE [--color=WHEN]
+  Usage: slick build FILE [-o OUT] [--emit-c] [OPTIONS]
+         slick run FILE [OPTIONS]
+  Options: --color=WHEN  --warn-implicit-conversions  --warnings-as-errors
   [2]
 
   $ slick run
   Error: Missing input file
-  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
-         slick run FILE [--color=WHEN]
+  Usage: slick build FILE [-o OUT] [--emit-c] [OPTIONS]
+         slick run FILE [OPTIONS]
+  Options: --color=WHEN  --warn-implicit-conversions  --warnings-as-errors
   [2]
 
   $ slick build
   Error: Missing input file
-  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
-         slick run FILE [--color=WHEN]
+  Usage: slick build FILE [-o OUT] [--emit-c] [OPTIONS]
+         slick run FILE [OPTIONS]
+  Options: --color=WHEN  --warn-implicit-conversions  --warnings-as-errors
   [2]
 
 The input must exist and be a .slick file.

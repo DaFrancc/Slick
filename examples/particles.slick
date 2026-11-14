@@ -1,0 +1,79 @@
+// A few particles moving under gravity, using structs, pointers, floats,
+// bit flags and the other integer types.
+
+Vec2 :: struct { x, y: f32 }
+
+Particle :: struct {
+    pos, vel: Vec2,
+    id: u8,
+    flags: u32,
+}
+
+// Bit flags. Functions stand in for constants until Slick has them.
+alive :: fn() -> u32 { return 1 << 0; }
+bounced :: fn() -> u32 { return 1 << 1; }
+
+add :: fn(a, b: Vec2) -> Vec2 {
+    return .{ a.x + b.x, a.y + b.y };
+}
+
+scale :: fn(v: Vec2, k: f32) -> Vec2 {
+    return .{ v.x * k, v.y * k };
+}
+
+// Moves a particle by one time step. It bounces off the floor at y = 0.
+step :: fn(p: *mut Particle, dt: f32) {
+    gravity := Vec2{ 0, -10 };
+    p.vel = add(p.vel, scale(gravity, dt));
+    p.pos = add(p.pos, scale(p.vel, dt));
+    if p.pos.y < 0 {
+        p.pos.y = -p.pos.y;
+        p.vel.y = -p.vel.y;
+        p.flags |= bounced();
+    }
+}
+
+show :: fn(p: *Particle) {
+    print(p.id);
+    print(p.pos.x, 3);
+    print(p.pos.y, 3);
+    print(p.flags & bounced() != 0);
+}
+
+factorial :: fn(n: i64) -> i64 {
+    if n <= 1 { return 1; }
+    return n * factorial(n - 1);
+}
+
+main :: fn() {
+    a : mut = Particle{ pos = .{ 0, 1 }, vel = .{ 2, 0 }, id = 1, flags = alive() };
+    b : mut = Particle{ pos = .{ 5, 10 }, vel = .{ -1, 4 }, id = 2, flags = alive() };
+
+    // Steps of a quarter second, which floats represent exactly.
+    i : mut = 0;
+    while i < 4 {
+        step(&mut a, 0.25);
+        step(&mut b, 0.25);
+        i += 1;
+    }
+    show(&a);
+    show(&b);
+
+    // An id counter wraps around at 256.
+    next_id : mut u8 = 250;
+    count : mut = 0;
+    while count < 10 {
+        next_id += 1;
+        count += 1;
+    }
+    print(next_id);
+
+    // 20! is the largest factorial an i64 holds.
+    print(factorial(20));
+
+    // Casts between floats and integers.
+    speed := a.vel.x * 3.7;
+    print(speed);
+    print(cast(i32, speed));
+    print(cast(f64, speed) / 2);
+}

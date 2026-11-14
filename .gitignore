@@ -1,5 +1,6 @@
 _build/
 *.install
 
-# Executables from 'slick build examples/fib.slick' run at the repo root.
+# Executables from 'slick build examples/<name>.slick' run at the repo root.
 /fib
+/particles
