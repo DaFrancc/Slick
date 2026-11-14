@@ -6,37 +6,37 @@ C compiler failure with 3.
 No arguments, an unknown command, or a missing file name prints the usage.
 
   $ slick
-  usage: slick build FILE [-o OUT] [--emit-c]
-         slick run FILE
+  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
+         slick run FILE [--color=WHEN]
   [2]
 
   $ slick frobnicate x.slick
-  slick: unknown command 'frobnicate'
-  usage: slick build FILE [-o OUT] [--emit-c]
-         slick run FILE
+  Error: Unknown command 'frobnicate'
+  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
+         slick run FILE [--color=WHEN]
   [2]
 
   $ slick run
-  slick: missing input file
-  usage: slick build FILE [-o OUT] [--emit-c]
-         slick run FILE
+  Error: Missing input file
+  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
+         slick run FILE [--color=WHEN]
   [2]
 
   $ slick build
-  slick: missing input file
-  usage: slick build FILE [-o OUT] [--emit-c]
-         slick run FILE
+  Error: Missing input file
+  Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]
+         slick run FILE [--color=WHEN]
   [2]
 
 The input must exist and be a .slick file.
 
   $ slick run nope.slick
-  slick: cannot find 'nope.slick'
+  Error: Cannot find 'nope.slick'
   [2]
 
   $ touch notes.txt
   $ slick build notes.txt
-  slick: 'notes.txt' is not a .slick file
+  Error: 'notes.txt' is not a .slick file
   [2]
 
 Bad options.
@@ -46,28 +46,33 @@ Bad options.
   > EOF
 
   $ slick build hello.slick -o
-  slick: '-o' needs a file name
+  Error: '-o' needs a file name
   [2]
 
   $ slick build hello.slick --fast
-  slick: unknown option '--fast'
+  Error: Unknown option '--fast'
   [2]
 
   $ slick run hello.slick extra
-  slick: unexpected argument 'extra'
+  Error: Unexpected argument 'extra'
   [2]
 
   $ slick run hello.slick -o out
-  slick: '-o' only works with 'slick build'
+  Error: '-o' only works with 'slick build'
   [2]
 
   $ slick run hello.slick --emit-c
-  slick: '--emit-c' only works with 'slick build'
+  Error: '--emit-c' only works with 'slick build'
   [2]
 
   $ slick build hello.slick other.slick
-  slick: unexpected argument 'other.slick'
+  Error: Unexpected argument 'other.slick'
   [2]
+
+Command-line errors follow --color, even when it comes after the mistake.
+
+  $ slick build hello.slick --fast --color=always 2>&1 | cat -v
+  ^[[1;31mError^[[0m^[[1m: Unknown option '--fast'^[[0m
 
 `build` writes an executable named after the source file, in the current
 directory.
@@ -109,8 +114,15 @@ A compile error exits with 1 and writes no executable.
   > main :: fn() { print(1) }
   > EOF
   $ slick build broken.slick
-  broken.slick:1:24: error: expected ';' at the end of this statement
+  Error: Expected ';' at the end of this statement
+   --> broken.slick:1:24
+    |
+  1 | main :: fn() { print(1); }
+    |                        + Expected ';'
+  
+  Error: Could not compile 'broken.slick' due to 1 error
   [1]
+
   $ test -e broken || echo "no executable"
   no executable
 
@@ -120,6 +132,8 @@ with 3 and keep the C file.
   $ CC=false slick build hello.slick 2> err; echo "exit $?"
   exit 3
   $ sed 's|/[^ ]*\.c$|FILE.c|' err
-  slick: internal error: the C compiler rejected the generated code; it was kept at FILE.c
+  Error: Internal compiler error: the C compiler rejected the generated code
+  Note: The generated C was kept at FILE.c
+  Note: This is a bug in slick
   $ test -f "$(grep -o '/[^ ]*\.c$' err)" && echo "kept"
   kept

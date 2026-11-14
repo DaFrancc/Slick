@@ -47,8 +47,7 @@ type kind =
 type t = {
   kind : kind;
   text : string; (* the source text, for messages *)
-  loc : Diag.loc; (* first character *)
-  end_loc : Diag.loc; (* just past the last character *)
+  span : Diag.span;
 }
 
 (* How a token is named in "expected X, found Y" messages. *)

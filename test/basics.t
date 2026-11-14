@@ -76,7 +76,13 @@ A missing ';' is reported where the statement ended, not on the next line.
   > }
   > EOF
   $ slick run semi.slick
-  semi.slick:2:13: error: expected ';' at the end of this statement
+  Error: Expected ';' at the end of this statement
+   --> semi.slick:2:13
+    |
+  2 |     print(1);
+    |             + Expected ';'
+  
+  Error: Could not compile 'semi.slick' due to 1 error
   [1]
 
 The last statement before '}' needs its ';' too.
@@ -85,7 +91,13 @@ The last statement before '}' needs its ';' too.
   > main :: fn() { print(1) }
   > EOF
   $ slick run semi_brace.slick
-  semi_brace.slick:1:24: error: expected ';' at the end of this statement
+  Error: Expected ';' at the end of this statement
+   --> semi_brace.slick:1:24
+    |
+  1 | main :: fn() { print(1); }
+    |                        + Expected ';'
+  
+  Error: Could not compile 'semi_brace.slick' due to 1 error
   [1]
 
 A ';' with no statement is an error, in a block and after a function body.
@@ -97,7 +109,18 @@ A ';' with no statement is an error, in a block and after a function body.
   > }
   > EOF
   $ slick run lone.slick
-  lone.slick:3:5: error: unexpected ';'
+  Error: Unexpected ';'
+   --> lone.slick:3:5
+    |
+  3 |     ;
+    |     ^ Not needed here
+    |
+  Help: Remove it
+    |
+  3 |     ;
+    |     -
+  
+  Error: Could not compile 'lone.slick' due to 1 error
   [1]
 
   $ cat > after_fn.slick <<'EOF'
@@ -106,7 +129,19 @@ A ';' with no statement is an error, in a block and after a function body.
   > };
   > EOF
   $ slick run after_fn.slick
-  after_fn.slick:3:2: error: unexpected ';'
+  Error: Unexpected ';'
+   --> after_fn.slick:3:2
+    |
+  3 | };
+    |  ^ Not needed here
+    |
+  Note: A function definition ends at its '}'
+  Help: Remove it
+    |
+  3 | };
+    |  -
+  
+  Error: Could not compile 'after_fn.slick' due to 1 error
   [1]
 
 There must be a main, and it takes nothing and returns nothing.
@@ -115,21 +150,41 @@ There must be a main, and it takes nothing and returns nothing.
   > helper :: fn() { print(1); }
   > EOF
   $ slick run nomain.slick
-  nomain.slick: error: no 'main' function found
+  Error: No 'main' function found
+   --> nomain.slick
+  Help: Add one, like 'main :: fn() { }'
+  
+  Error: Could not compile 'nomain.slick' due to 1 error
   [1]
 
   $ cat > main_param.slick <<'EOF'
   > main :: fn(n: i32) { print(n); }
   > EOF
   $ slick run main_param.slick
-  main_param.slick:1:1: error: 'main' must take no parameters and return nothing
+  Error: 'main' must take no parameters and return nothing
+   --> main_param.slick:1:11
+    |
+  1 | main :: fn(n: i32) { print(n); }
+    |           ^^^^^^^^
+    |
+  Help: Write it as 'main :: fn() { ... }'
+  
+  Error: Could not compile 'main_param.slick' due to 1 error
   [1]
 
   $ cat > main_ret.slick <<'EOF'
   > main :: fn() -> i32 { return 0; }
   > EOF
   $ slick run main_ret.slick
-  main_ret.slick:1:1: error: 'main' must take no parameters and return nothing
+  Error: 'main' must take no parameters and return nothing
+   --> main_ret.slick:1:17
+    |
+  1 | main :: fn() -> i32 { return 0; }
+    |                 ^^^
+    |
+  Help: Write it as 'main :: fn() { ... }'
+  
+  Error: Could not compile 'main_ret.slick' due to 1 error
   [1]
 
 Functions cannot be defined twice, and print cannot be redefined.
@@ -140,7 +195,15 @@ Functions cannot be defined twice, and print cannot be redefined.
   > main :: fn() { f(); }
   > EOF
   $ slick run dup.slick
-  dup.slick:2:1: error: function 'f' is already defined on line 1
+  Error: Function 'f' is already defined
+   --> dup.slick:2:1
+    |
+  1 | f :: fn() { print(1); }
+    | - First defined here
+  2 | f :: fn() { print(2); }
+    | ^ Defined again here
+  
+  Error: Could not compile 'dup.slick' due to 1 error
   [1]
 
   $ cat > redef_print.slick <<'EOF'
@@ -148,7 +211,15 @@ Functions cannot be defined twice, and print cannot be redefined.
   > main :: fn() { }
   > EOF
   $ slick run redef_print.slick
-  redef_print.slick:1:1: error: 'print' is a built-in function and cannot be redeclared
+  Error: 'print' is a built-in function and cannot be redeclared
+   --> redef_print.slick:1:1
+    |
+  1 | print :: fn() { }
+    | ^^^^^
+    |
+  Help: Choose a different name
+  
+  Error: Could not compile 'redef_print.slick' due to 1 error
   [1]
 
 Unknown functions.
@@ -159,7 +230,18 @@ Unknown functions.
   > }
   > EOF
   $ slick run unknown_fn.slick
-  unknown_fn.slick:2:5: error: unknown function 'prnt'
+  Error: Unknown function 'prnt'
+   --> unknown_fn.slick:2:5
+    |
+  2 |     prnt(1);
+    |     ^^^^ Not defined
+    |
+  Help: Did you mean 'print'?
+    |
+  2 |     print(1);
+    |     ~~~~~
+  
+  Error: Could not compile 'unknown_fn.slick' due to 1 error
   [1]
 
 A character the language does not use, with its line and column.
@@ -170,7 +252,13 @@ A character the language does not use, with its line and column.
   > }
   > EOF
   $ slick run at.slick
-  at.slick:2:14: error: unexpected character '@'
+  Error: Unexpected character '@'
+   --> at.slick:2:14
+    |
+  2 |     print(1) @ 2;
+    |              ^
+  
+  Error: Could not compile 'at.slick' due to 1 error
   [1]
 
 Keywords from later milestones are reserved now.
@@ -181,7 +269,13 @@ Keywords from later milestones are reserved now.
   > }
   > EOF
   $ slick run reserved.slick
-  reserved.slick:2:5: error: 'for' is not supported yet
+  Error: 'for' is not supported yet
+   --> reserved.slick:2:5
+    |
+  2 |     for(1);
+    |     ^^^ Reserved for a later version of Slick
+  
+  Error: Could not compile 'reserved.slick' due to 1 error
   [1]
 
 Only function definitions are allowed at the top level for now.
@@ -191,7 +285,15 @@ Only function definitions are allowed at the top level for now.
   > main :: fn() { }
   > EOF
   $ slick run toplevel.slick
-  toplevel.slick:1:3: error: expected '::', found ':='
+  Error: Expected '::', found ':='
+   --> toplevel.slick:1:3
+    |
+  1 | x := 5;
+    |   ^^ Expected '::'
+    |
+  Note: Only functions can be defined at the top level for now
+  
+  Error: Could not compile 'toplevel.slick' due to 1 error
   [1]
 
   $ cat > toplevel_const.slick <<'EOF'
@@ -199,14 +301,30 @@ Only function definitions are allowed at the top level for now.
   > main :: fn() { }
   > EOF
   $ slick run toplevel_const.slick
-  toplevel_const.slick:1:8: error: expected 'fn', found '1024'
+  Error: Expected 'fn', found '1024'
+   --> toplevel_const.slick:1:8
+    |
+  1 | MAX :: 1024;
+    |        ^^^^ Expected 'fn'
+    |
+  Note: Only functions can be defined at the top level for now
+  
+  Error: Could not compile 'toplevel_const.slick' due to 1 error
   [1]
 
 A byte outside printable ASCII is reported by its value.
 
   $ printf 'main :: fn() {\n    print(1);\n}\n\303\251\n' > byte.slick
   $ slick run byte.slick
-  byte.slick:4:1: error: unexpected byte 0xC3
+  Error: Unexpected byte 0xC3
+   --> byte.slick:4:1
+    |
+  4 | é
+    | ^
+    |
+  Note: Only comments can contain characters outside ASCII
+  
+  Error: Could not compile 'byte.slick' due to 1 error
   [1]
 
 Other parser errors use the form 'expected X, found Y'.
@@ -215,35 +333,67 @@ Other parser errors use the form 'expected X, found Y'.
   > 5
   > EOF
   $ slick run top_number.slick
-  top_number.slick:1:1: error: expected a function definition, found '5'
+  Error: Expected a function definition, found '5'
+   --> top_number.slick:1:1
+    |
+  1 | 5
+    | ^ Expected a function definition
+    |
+  Note: Only functions can be defined at the top level for now
+  
+  Error: Could not compile 'top_number.slick' due to 1 error
   [1]
 
   $ cat > no_paren.slick <<'EOF'
   > f :: fn { }
   > EOF
   $ slick run no_paren.slick
-  no_paren.slick:1:9: error: expected '(', found '{'
+  Error: Expected '(', found '{'
+   --> no_paren.slick:1:9
+    |
+  1 | f :: fn { }
+    |         ^ Expected '('
+  
+  Error: Could not compile 'no_paren.slick' due to 1 error
   [1]
 
   $ cat > param_name.slick <<'EOF'
   > f :: fn(1) { }
   > EOF
   $ slick run param_name.slick
-  param_name.slick:1:9: error: expected a parameter name, found '1'
+  Error: Expected a parameter name, found '1'
+   --> param_name.slick:1:9
+    |
+  1 | f :: fn(1) { }
+    |         ^ Expected a parameter name
+  
+  Error: Could not compile 'param_name.slick' due to 1 error
   [1]
 
   $ cat > param_colon.slick <<'EOF'
   > f :: fn(a i32) { }
   > EOF
   $ slick run param_colon.slick
-  param_colon.slick:1:11: error: expected ':', found 'i32'
+  Error: Expected ':', found 'i32'
+   --> param_colon.slick:1:11
+    |
+  1 | f :: fn(a i32) { }
+    |           ^^^ Expected ':'
+  
+  Error: Could not compile 'param_colon.slick' due to 1 error
   [1]
 
   $ cat > no_ret_type.slick <<'EOF'
   > f :: fn() -> { }
   > EOF
   $ slick run no_ret_type.slick
-  no_ret_type.slick:1:14: error: expected a type, found '{'
+  Error: Expected a type, found '{'
+   --> no_ret_type.slick:1:14
+    |
+  1 | f :: fn() -> { }
+    |              ^ Expected a type
+  
+  Error: Could not compile 'no_ret_type.slick' due to 1 error
   [1]
 
 An unterminated function body.
@@ -253,5 +403,15 @@ An unterminated function body.
   >     print(1);
   > EOF
   $ slick run eof.slick
-  eof.slick:3:1: error: expected '}', found end of file
+  Error: Expected '}', found end of file
+   --> eof.slick:3:1
+    |
+  1 | main :: fn() {
+    |              - This '{' is not closed
+  2 |     print(1);
+  3 |
+    | ^ Expected '}'
+  
+  Error: Could not compile 'eof.slick' due to 1 error
   [1]
+

@@ -100,7 +100,20 @@ Parameters without 'mut' cannot be assigned to.
   > main :: fn() { f(1); }
   > EOF
   $ slick run param_immutable.slick
-  param_immutable.slick:2:5: error: cannot assign to parameter 'n': it was declared without 'mut' on line 1
+  Error: Cannot assign to parameter 'n': it was declared without 'mut'
+   --> param_immutable.slick:2:5
+    |
+  1 | f :: fn(n: i32) {
+    |         - Declared here without 'mut'
+  2 |     n = 2;
+    |     ^ Cannot assign
+    |
+  Help: Declare it with 'mut'
+    |
+  1 | f :: fn(n: mut i32) {
+    |            ++++
+  
+  Error: Could not compile 'param_immutable.slick' due to 1 error
   [1]
 
 A call that returns a value can be a statement, and its result is dropped.
@@ -198,7 +211,16 @@ And rejects these. The error points at the '}' that ends the function.
   > main :: fn() { print(f(1)); }
   > EOF
   $ slick run missing_end.slick
-  missing_end.slick:3:1: error: 'f' is missing a return: not every path returns a value
+  Error: 'f' is missing a return: not every path returns a value
+   --> missing_end.slick:3:1
+    |
+  1 | f :: fn(n: i32) -> i32 {
+    |                    --- Declared to return i32 here
+  2 |     print(n);
+  3 | }
+    | ^ Can reach the end without returning
+  
+  Error: Could not compile 'missing_end.slick' due to 1 error
   [1]
 
   $ cat > missing_branch.slick <<'EOF'
@@ -212,7 +234,16 @@ And rejects these. The error points at the '}' that ends the function.
   > main :: fn() { print(f(1)); }
   > EOF
   $ slick run missing_branch.slick
-  missing_branch.slick:7:1: error: 'f' is missing a return: not every path returns a value
+  Error: 'f' is missing a return: not every path returns a value
+   --> missing_branch.slick:7:1
+    |
+  1 | f :: fn(n: i32) -> i32 {
+    |                    --- Declared to return i32 here
+  ...
+  7 | }
+    | ^ Can reach the end without returning
+  
+  Error: Could not compile 'missing_branch.slick' due to 1 error
   [1]
 
   $ cat > missing_else.slick <<'EOF'
@@ -226,7 +257,16 @@ And rejects these. The error points at the '}' that ends the function.
   > main :: fn() { print(f(1)); }
   > EOF
   $ slick run missing_else.slick
-  missing_else.slick:7:1: error: 'f' is missing a return: not every path returns a value
+  Error: 'f' is missing a return: not every path returns a value
+   --> missing_else.slick:7:1
+    |
+  1 | f :: fn(n: i32) -> i32 {
+    |                    --- Declared to return i32 here
+  ...
+  7 | }
+    | ^ Can reach the end without returning
+  
+  Error: Could not compile 'missing_else.slick' due to 1 error
   [1]
 
 A return inside a loop does not count, even when the loop never ends.
@@ -240,7 +280,18 @@ A return inside a loop does not count, even when the loop never ends.
   > main :: fn() { print(f()); }
   > EOF
   $ slick run missing_loop.slick
-  missing_loop.slick:5:1: error: 'f' is missing a return: not every path returns a value
+  Error: 'f' is missing a return: not every path returns a value
+   --> missing_loop.slick:5:1
+    |
+  1 | f :: fn() -> i32 {
+    |              --- Declared to return i32 here
+  ...
+  5 | }
+    | ^ Can reach the end without returning
+    |
+  Note: A 'return' inside a 'while' loop does not count, because the loop might not run
+  
+  Error: Could not compile 'missing_loop.slick' due to 1 error
   [1]
 
 A return must match the function's return type.
@@ -252,7 +303,15 @@ A return must match the function's return type.
   > main :: fn() { print(f()); }
   > EOF
   $ slick run return_no_value.slick
-  return_no_value.slick:2:5: error: 'f' returns i32, but this 'return' has no value
+  Error: 'f' returns i32, but this 'return' has no value
+   --> return_no_value.slick:2:5
+    |
+  1 | f :: fn() -> i32 {
+    |              --- Declared to return i32 here
+  2 |     return;
+    |     ^^^^^^ Needs a value
+  
+  Error: Could not compile 'return_no_value.slick' due to 1 error
   [1]
 
   $ cat > return_value_void.slick <<'EOF'
@@ -262,7 +321,17 @@ A return must match the function's return type.
   > main :: fn() { g(); }
   > EOF
   $ slick run return_value_void.slick
-  return_value_void.slick:2:12: error: 'g' returns nothing, but this 'return' has a value
+  Error: 'g' returns nothing, but this 'return' has a value
+   --> return_value_void.slick:2:12
+    |
+  1 | g :: fn() {
+    | - Declared here with no return type
+  2 |     return 1;
+    |            ^
+    |
+  Help: Remove the value, or give 'g' a return type
+  
+  Error: Could not compile 'return_value_void.slick' due to 1 error
   [1]
 
   $ cat > return_type.slick <<'EOF'
@@ -272,7 +341,15 @@ A return must match the function's return type.
   > main :: fn() { print(h()); }
   > EOF
   $ slick run return_type.slick
-  return_type.slick:2:12: error: 'h' returns i32, but this 'return' has a value of type bool
+  Error: 'h' returns i32, but this 'return' has a value of type bool
+   --> return_type.slick:2:12
+    |
+  1 | h :: fn() -> i32 {
+    |              --- Declared to return i32 here
+  2 |     return true;
+    |            ^^^^ This is bool
+  
+  Error: Could not compile 'return_type.slick' due to 1 error
   [1]
 
 Calls must match the function's parameters.
@@ -284,7 +361,16 @@ Calls must match the function's parameters.
   > }
   > EOF
   $ slick run too_few.slick
-  too_few.slick:3:11: error: 'sub' expects 2 arguments, found 1
+  Error: 'sub' expects 2 arguments, found 1
+   --> too_few.slick:3:14
+    |
+  1 | sub :: fn(a: i32, b: i32) -> i32 { return a - b; }
+    |          ---------------- 'sub' is defined here
+  2 | main :: fn() {
+  3 |     print(sub(1));
+    |              ^^^ Found 1 argument
+  
+  Error: Could not compile 'too_few.slick' due to 1 error
   [1]
 
   $ cat > too_many.slick <<'EOF'
@@ -294,7 +380,16 @@ Calls must match the function's parameters.
   > }
   > EOF
   $ slick run too_many.slick
-  too_many.slick:3:5: error: 'one' expects 1 argument, found 2
+  Error: 'one' expects 1 argument, found 2
+   --> too_many.slick:3:8
+    |
+  1 | one :: fn(a: i32) { }
+    |          -------- 'one' is defined here
+  2 | main :: fn() {
+  3 |     one(1, 2);
+    |        ^^^^^^ Found 2 arguments
+  
+  Error: Could not compile 'too_many.slick' due to 1 error
   [1]
 
   $ cat > arg_type.slick <<'EOF'
@@ -304,7 +399,16 @@ Calls must match the function's parameters.
   > }
   > EOF
   $ slick run arg_type.slick
-  arg_type.slick:3:18: error: argument 2 of 'sub' expects i32, found bool
+  Error: Argument 2 of 'sub' expects i32, found bool
+   --> arg_type.slick:3:18
+    |
+  1 | sub :: fn(a: i32, b: i32) -> i32 { return a - b; }
+    |                   - Parameter 'b' is declared here
+  2 | main :: fn() {
+  3 |     print(sub(1, true));
+    |                  ^^^^ This is bool
+  
+  Error: Could not compile 'arg_type.slick' due to 1 error
   [1]
 
 Locals and parameters are not functions, and functions are not values yet.
@@ -316,7 +420,15 @@ Locals and parameters are not functions, and functions are not values yet.
   > }
   > EOF
   $ slick run call_local.slick
-  call_local.slick:3:5: error: 'x' is not a function
+  Error: 'x' is not a function
+   --> call_local.slick:3:5
+    |
+  2 |     x := 1;
+    |     - 'x' is declared here as i32
+  3 |     x();
+    |     ^
+  
+  Error: Could not compile 'call_local.slick' due to 1 error
   [1]
 
   $ cat > call_param.slick <<'EOF'
@@ -326,7 +438,15 @@ Locals and parameters are not functions, and functions are not values yet.
   > main :: fn() { print(f(1)); }
   > EOF
   $ slick run call_param.slick
-  call_param.slick:2:12: error: 'n' is not a function
+  Error: 'n' is not a function
+   --> call_param.slick:2:12
+    |
+  1 | f :: fn(n: i32) -> i32 {
+    |         - 'n' is declared here as i32
+  2 |     return n(1);
+    |            ^
+  
+  Error: Could not compile 'call_param.slick' due to 1 error
   [1]
 
   $ cat > fn_value.slick <<'EOF'
@@ -336,7 +456,41 @@ Locals and parameters are not functions, and functions are not values yet.
   > }
   > EOF
   $ slick run fn_value.slick
-  fn_value.slick:3:10: error: 'helper' cannot be used as a value yet
+  Error: 'helper' is a function and cannot be used as a value yet
+   --> fn_value.slick:3:10
+    |
+  1 | helper :: fn() { }
+    | ------ Function defined here
+  2 | main :: fn() {
+  3 |     y := helper;
+    |          ^^^^^^
+    |
+  Help: To call it, add parentheses
+    |
+  3 |     y := helper();
+    |                ++
+  
+  Error: Could not compile 'fn_value.slick' due to 1 error
+  [1]
+
+print has a parameter and no source, so there is no edit and no label at
+its definition.
+
+  $ cat > print_as_value.slick <<'EOF'
+  > main :: fn() {
+  >     x := print;
+  > }
+  > EOF
+  $ slick run print_as_value.slick
+  Error: 'print' is a function and cannot be used as a value yet
+   --> print_as_value.slick:2:10
+    |
+  2 |     x := print;
+    |          ^^^^^
+    |
+  Help: To call it, add parentheses
+  
+  Error: Could not compile 'print_as_value.slick' due to 1 error
   [1]
 
 A function that returns nothing has no value to use.
@@ -348,7 +502,16 @@ A function that returns nothing has no value to use.
   > }
   > EOF
   $ slick run void_value.slick
-  void_value.slick:3:10: error: 'helper' returns nothing and cannot be used as a value
+  Error: 'helper' returns nothing, so it has no value to use
+   --> void_value.slick:3:10
+    |
+  1 | helper :: fn() { }
+    | ------ Declared here with no return type
+  2 | main :: fn() {
+  3 |     x := helper();
+    |          ^^^^^^^^
+  
+  Error: Could not compile 'void_value.slick' due to 1 error
   [1]
 
   $ cat > print_value.slick <<'EOF'
@@ -357,7 +520,13 @@ A function that returns nothing has no value to use.
   > }
   > EOF
   $ slick run print_value.slick
-  print_value.slick:2:11: error: 'print' returns nothing and cannot be used as a value
+  Error: 'print' returns nothing, so it has no value to use
+   --> print_value.slick:2:11
+    |
+  2 |     print(print(1));
+    |           ^^^^^^^^
+  
+  Error: Could not compile 'print_value.slick' due to 1 error
   [1]
 
 No shadowing applies to parameters: a local cannot reuse a parameter's name
@@ -371,7 +540,18 @@ a function's name.
   > main :: fn() { f(1); }
   > EOF
   $ slick run local_param.slick
-  local_param.slick:2:5: error: 'n' is already declared on line 1
+  Error: 'n' is already declared
+   --> local_param.slick:2:5
+    |
+  1 | f :: fn(n: i32) {
+    |         - First declared here
+  2 |     n := 1;
+    |     ^ Declared again here
+    |
+  Note: Slick does not allow shadowing
+  Help: Choose a different name
+  
+  Error: Could not compile 'local_param.slick' due to 1 error
   [1]
 
   $ cat > local_param_nested.slick <<'EOF'
@@ -383,7 +563,19 @@ a function's name.
   > main :: fn() { f(1); }
   > EOF
   $ slick run local_param_nested.slick
-  local_param_nested.slick:3:9: error: 'n' is already declared on line 1
+  Error: 'n' is already declared
+   --> local_param_nested.slick:3:9
+    |
+  1 | f :: fn(n: i32) {
+    |         - First declared here
+  2 |     if true {
+  3 |         n := 2;
+    |         ^ Declared again here
+    |
+  Note: Slick does not allow shadowing
+  Help: Choose a different name
+  
+  Error: Could not compile 'local_param_nested.slick' due to 1 error
   [1]
 
   $ cat > dup_param.slick <<'EOF'
@@ -391,7 +583,17 @@ a function's name.
   > main :: fn() { f(1, 2); }
   > EOF
   $ slick run dup_param.slick
-  dup_param.slick:1:17: error: 'a' is already declared on line 1
+  Error: 'a' is already declared
+   --> dup_param.slick:1:17
+    |
+  1 | f :: fn(a: i32, a: i32) { }
+    |         - First declared here
+    |                 ^ Declared again here
+    |
+  Note: Slick does not allow shadowing
+  Help: Choose a different name
+  
+  Error: Could not compile 'dup_param.slick' due to 1 error
   [1]
 
   $ cat > param_fn_name.slick <<'EOF'
@@ -399,7 +601,18 @@ a function's name.
   > main :: fn() { f(1); }
   > EOF
   $ slick run param_fn_name.slick
-  param_fn_name.slick:1:9: error: 'main' is already declared as a function on line 2
+  Error: 'main' is already declared as a function
+   --> param_fn_name.slick:1:9
+    |
+  1 | f :: fn(main: i32) { }
+    |         ^^^^ Declared again here
+  2 | main :: fn() { f(1); }
+    | ---- Function defined here
+    |
+  Note: Slick does not allow shadowing
+  Help: Choose a different name
+  
+  Error: Could not compile 'param_fn_name.slick' due to 1 error
   [1]
 
 Names are per function: two functions can each have a parameter 'n' and a
@@ -471,7 +684,15 @@ Unknown parameter and return types.
   > main :: fn() { }
   > EOF
   $ slick run param_type.slick
-  param_type.slick:1:12: error: unknown type 'Foo'
+  Error: Unknown type 'Foo'
+   --> param_type.slick:1:12
+    |
+  1 | f :: fn(n: Foo) { }
+    |            ^^^ Not a type
+    |
+  Note: The types available now are i32 and bool
+  
+  Error: Could not compile 'param_type.slick' due to 1 error
   [1]
 
   $ cat > ret_type.slick <<'EOF'
@@ -479,5 +700,35 @@ Unknown parameter and return types.
   > main :: fn() { }
   > EOF
   $ slick run ret_type.slick
-  ret_type.slick:1:14: error: unknown type 'Bar'
+  Error: Unknown type 'Bar'
+   --> ret_type.slick:1:14
+    |
+  1 | f :: fn() -> Bar { }
+    |              ^^^ Not a type
+    |
+  Note: The types available now are i32 and bool
+  
+  Error: Could not compile 'ret_type.slick' due to 1 error
   [1]
+
+A familiar name from another language gets a suggestion.
+
+  $ cat > int_type.slick <<'EOF'
+  > f :: fn(n: int) { }
+  > main :: fn() { }
+  > EOF
+  $ slick run int_type.slick
+  Error: Unknown type 'int'
+   --> int_type.slick:1:12
+    |
+  1 | f :: fn(n: int) { }
+    |            ^^^ Not a type
+    |
+  Help: Did you mean 'i32'?
+    |
+  1 | f :: fn(n: i32) { }
+    |            ~~~
+  
+  Error: Could not compile 'int_type.slick' due to 1 error
+  [1]
+

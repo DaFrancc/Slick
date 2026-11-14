@@ -1,30 +1,67 @@
 (* Runs the phases and the C compiler. Command-line parsing is in bin/main.ml. *)
 
 let usage =
-  "usage: slick build FILE [-o OUT] [--emit-c]\n       slick run FILE\n"
+  "Usage: slick build FILE [-o OUT] [--emit-c] [--color=WHEN]\n\
+  \       slick run FILE [--color=WHEN]\n"
+
+type color_choice = Auto | Always | Never
+
+(* The --color setting, which bin/main.ml reads before anything else so that
+   command-line errors follow it too. *)
+type settings = { mutable color : color_choice }
+
+let settings = { color = Auto }
+
+(* --color decides if given; otherwise a non-empty NO_COLOR turns color off;
+   otherwise color is on when stderr is a terminal. *)
+let use_color choice =
+  match choice with
+  | Always -> true
+  | Never -> false
+  | Auto -> (
+      match Sys.getenv_opt "NO_COLOR" with
+      | Some v when v <> "" -> false
+      | _ -> Unix.isatty Unix.stderr)
+
+let cli_error msg =
+  let color = use_color settings.color in
+  prerr_string
+    (Render.paint color Render.bold_red "Error"
+    ^ Render.paint color Render.bold (": " ^ msg)
+    ^ "\n")
+
+let cli_note msg =
+  let color = use_color settings.color in
+  prerr_string (Render.paint color Render.bold_green "Note" ^ ": " ^ msg ^ "\n")
 
 (* A usage error that also prints the usage text. *)
 let usage_error msg =
-  if msg <> "" then Printf.eprintf "slick: %s\n" msg;
+  if msg <> "" then cli_error msg;
   prerr_string usage;
   exit 2
 
 (* A usage error that is clear without the usage text. *)
 let arg_error msg =
-  Printf.eprintf "slick: %s\n" msg;
+  cli_error msg;
   exit 2
 
 let check_input path =
   if not (Filename.check_suffix path ".slick") then
     arg_error (Printf.sprintf "'%s' is not a .slick file" path);
   if (not (Sys.file_exists path)) || Sys.is_directory path then
-    arg_error (Printf.sprintf "cannot find '%s'" path)
+    arg_error (Printf.sprintf "Cannot find '%s'" path)
 
 let compile_to_c path =
   let src = In_channel.with_open_bin path In_channel.input_all in
+  Report.setup path src (use_color settings.color);
+  (* Each phase reports every error it finds; the next phase only runs on a
+     clean result, so it never sees input broken by an earlier mistake. *)
   let toks = Lexer.tokenize path src in
+  Report.stop_if_errors ();
   let file = Parser.parse_file path toks in
+  Report.stop_if_errors ();
   Check.check_file file;
+  Report.stop_if_errors ();
   Emit_c.emit_file file
 
 let env_or name default =
@@ -52,10 +89,10 @@ let compile_c c_src out =
       (Filename.quote c_path)
   in
   if Sys.command cmd <> 0 then begin
-    Printf.eprintf
-      "slick: internal error: the C compiler rejected the generated code; it \
-       was kept at %s\n"
-      c_path;
+    cli_error
+      "Internal compiler error: the C compiler rejected the generated code";
+    cli_note ("The generated C was kept at " ^ c_path);
+    cli_note "This is a bug in slick";
     exit 3
   end;
   Sys.remove c_path

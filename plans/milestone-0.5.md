@@ -296,7 +296,9 @@ help without saying why in the final report.
 | Old message | New header | Labels | Notes and helps |
 | --- | --- | --- | --- |
 | `expected X, found Y` | `Expected X, found Y` | P the found token: `Expected X` | At top level, when Y is `:=`, `:` or `::` followed by something other than `fn`: Note: `Only functions can be defined at the top level for now` |
-| `expected ';' at the end of this statement` | `Expected ';' at the end of this statement` | P the point just after the last token: `Expected ';'` | Help: `Add a ';'`, inserting `;` there |
+| `expected ';' at the end of this statement` | `Expected ';' at the end of this statement` | P the point just after the last token, showing the missing `;` in the line, in green, with `+` under it: `Expected ';'` | None: the label already shows the fix (programmer's call, 2026-11-14) |
+| (new) a name followed by more on the same line, close to a keyword | `'whle' is not a keyword` | P the name: no text | Help: `Did you mean 'while'?`, replacing it. Without a close keyword: `Expected ';', found X` |
+| `expected ')', found X` (closing a call or parentheses) | `Unclosed '('` when X is on a later line or is `;`, `{`, `}` or the end of the file; otherwise `Expected ')', found X` | P the point just after the last token, showing the missing `)` in the line, in green, with `+` under it: `Expected ')'`. In the other case, P X: `Expected ')'` | |
 | `comparisons cannot be chained; ...` | `Comparisons cannot be chained` | P second operator: no text. S first operator: no text | Help: `Combine them with '&&'`, inserting `&& <middle operand's source text> ` before the second operator, giving `1 < 2 && 2 < 3` |
 | `unexpected ';'` | `Unexpected ';'` | P the `;`: `Not needed here` | Help: `Remove it`, deleting the `;`. After a function body, also Note: `A function definition ends at its '}'` |
 | `'x' needs a type or an initial value` | `'x' needs a type or an initial value` | P name: no text | Help: `Give it a type, like 'x : mut i32;', or a value, like 'x : mut = 0;'` (drop `mut` from both if the declaration has none) |

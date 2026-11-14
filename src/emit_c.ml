@@ -17,6 +17,9 @@ type emitter = {
   mutable out : Buffer.t;
   mutable indent : int;
   mutable next_tmp : int; (* temporaries continue the function's symbol ids *)
+  (* The panic messages, one per division, as C definitions, in reverse. *)
+  mutable sites : string list;
+  mutable next_site : int;
 }
 
 let line em s =
@@ -38,7 +41,7 @@ let finish_capture em saved =
   em.indent <- em.indent - 1;
   captured
 
-(* A C string literal holding [s], for the source path in panic messages. *)
+(* A C string literal holding [s], for panic messages. *)
 let c_string_literal s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -46,6 +49,7 @@ let c_string_literal s =
     let ch = s.[i] in
     if ch = '"' then Buffer.add_string b "\\\""
     else if ch = '\\' then Buffer.add_string b "\\\\"
+    else if ch = '\n' then Buffer.add_string b "\\n"
     else if Char.code ch < 32 || Char.code ch > 126 then
       Buffer.add_string b (Printf.sprintf "\\%03o" (Char.code ch))
     else Buffer.add_char b ch
@@ -53,7 +57,9 @@ let c_string_literal s =
   Buffer.add_char b '"';
   Buffer.contents b
 
-let prelude path =
+(* The runtime. A panic prints a message the compiler rendered in advance,
+   with the source line, and exits. *)
+let prelude =
   String.concat "\n"
     [
       "#include <inttypes.h>";
@@ -62,34 +68,63 @@ let prelude path =
       "#include <stdio.h>";
       "#include <stdlib.h>";
       "";
-      "static const char *const slickrt_file = " ^ c_string_literal path ^ ";";
-      "";
       "static void slickrt_print_i32(int32_t v) { printf(\"%\" PRId32 \"\\n\", \
        v); }";
       "";
-      "static _Noreturn void slickrt_panic(int line, const char *msg) {";
+      "static _Noreturn void slickrt_panic(const char *msg) {";
       "    fflush(stdout);";
-      "    fprintf(stderr, \"%s:%d: panic: %s\\n\", slickrt_file, line, msg);";
+      "    fputs(msg, stderr);";
       "    exit(1);";
       "}";
       "";
       "/* INT32_MIN / -1 overflows, which traps on x86; Slick wraps it. */";
-      "static int32_t slickrt_div_i32(int32_t a, int32_t b, int line) {";
-      "    if (b == 0) slickrt_panic(line, \"division by zero\");";
+      "static int32_t slickrt_div_i32(int32_t a, int32_t b, const char *site) {";
+      "    if (b == 0) slickrt_panic(site);";
       "    if (b == -1) return (int32_t)(0u - (uint32_t)a);";
       "    return a / b;";
       "}";
       "";
-      "static int32_t slickrt_rem_i32(int32_t a, int32_t b, int line) {";
-      "    if (b == 0) slickrt_panic(line, \"remainder by zero\");";
+      "static int32_t slickrt_rem_i32(int32_t a, int32_t b, const char *site) {";
+      "    if (b == 0) slickrt_panic(site);";
       "    if (b == -1) return 0;";
       "    return a % b;";
       "}";
       "";
     ]
 
-let c_type t = match t with I32 -> "int32_t" | Bool -> "bool" | Void -> "void"
-let c_zero t = match t with I32 -> "0" | Bool -> "false" | Void -> ""
+(* Renders the panic for a division by zero at [divisor] and returns the
+   name of the C string that holds it. *)
+let panic_site em op (divisor : expr) =
+  let message = if op = Div then "Division by zero" else "Remainder by zero" in
+  let d =
+    {
+      (Diag.error divisor.span message "This is zero") with
+      severity = Diag.Panic;
+    }
+  in
+  let name = "slickrt_site_" ^ string_of_int em.next_site in
+  em.next_site <- em.next_site + 1;
+  em.sites <-
+    Printf.sprintf "static const char %s[] = %s;" name
+      (c_string_literal (Report.render_plain d))
+    :: em.sites;
+  name
+
+(* C is only emitted for programs with no errors, so [Err] never gets here. *)
+let c_type t =
+  match t with
+  | I32 -> "int32_t"
+  | Bool -> "bool"
+  | Void -> "void"
+  | Err -> failwith "emit: error type"
+
+let c_zero t =
+  match t with
+  | I32 -> "0"
+  | Bool -> "false"
+  | Void -> ""
+  | Err -> failwith "emit: error type"
+
 let c_func_name name = "slick_" ^ name
 
 let starts_with s prefix =
@@ -184,7 +219,9 @@ and emit_binary em b =
       let helper =
         if b.op = Div then "slickrt_div_i32" else "slickrt_rem_i32"
       in
-      atom (Printf.sprintf "%s(%s, %s, %d)" helper l.code r.code b.op_loc.line)
+      atom
+        (Printf.sprintf "%s(%s, %s, %s)" helper l.code r.code
+           (panic_site em b.op b.rhs))
   | op -> compound (operand l ^ " " ^ c_binop op ^ " " ^ operand r)
 
 (* 'a && b': if b needs no statements, C's own && is right. Otherwise b's
@@ -240,8 +277,9 @@ let assigned_value a =
   | Some op ->
       {
         kind =
-          Binary { op; op_loc = a.a_op_loc; lhs = a.a_target; rhs = a.a_value };
-        loc = a.a_target.loc;
+          Binary
+            { op; op_span = a.a_op_span; lhs = a.a_target; rhs = a.a_value };
+        span = Diag.join a.a_target.span a.a_value.span;
         ty = a.a_target.ty;
       }
 
@@ -277,8 +315,8 @@ let rec emit_stmt em s =
       emit_body em ifs.then_block;
       emit_else em ifs.else_part
   | While w -> emit_while em w
-  | Return None -> line em "return;"
-  | Return (Some e) ->
+  | Return { ret_value = None; _ } -> line em "return;"
+  | Return { ret_value = Some e; _ } ->
       let value = (emit_expr em e).code in
       line em ("return " ^ value ^ ";")
 
@@ -359,10 +397,18 @@ let emit_func em f =
   line em "}";
   line em ""
 
+(* The functions are emitted first, since that is what collects the panic
+   messages, which must come before them in the file. *)
 let emit_file (file : file) =
-  let em = { out = Buffer.create 4096; indent = 0; next_tmp = 1 } in
-  Buffer.add_string em.out (prelude file.path);
-  line em "";
+  let em =
+    {
+      out = Buffer.create 4096;
+      indent = 0;
+      next_tmp = 1;
+      sites = [];
+      next_site = 1;
+    }
+  in
   List.iter (emit_prototype em) file.funcs;
   line em "";
   List.iter (emit_func em) file.funcs;
@@ -370,4 +416,8 @@ let emit_file (file : file) =
   line em "    slick_main();";
   line em "    return 0;";
   line em "}";
-  Buffer.contents em.out
+  let sites = List.rev em.sites in
+  let site_block =
+    if sites = [] then "" else String.concat "\n" sites ^ "\n\n"
+  in
+  prelude ^ "\n" ^ site_block ^ Buffer.contents em.out

@@ -206,7 +206,19 @@ A name declared in a loop body cannot be declared again inside it.
   > }
   > EOF
   $ slick run loop_shadow.slick
-  loop_shadow.slick:5:13: error: 'n' is already declared on line 3
+  Error: 'n' is already declared
+   --> loop_shadow.slick:5:13
+    |
+  3 |         n := 1;
+    |         - First declared here
+  4 |         if true {
+  5 |             n := 2;
+    |             ^ Declared again here
+    |
+  Note: Slick does not allow shadowing
+  Help: Choose a different name
+  
+  Error: Could not compile 'loop_shadow.slick' due to 1 error
   [1]
 
 Conditions must be bool.
@@ -217,7 +229,18 @@ Conditions must be bool.
   > }
   > EOF
   $ slick run if_int.slick
-  if_int.slick:2:8: error: condition of 'if' must be bool, found i32
+  Error: Condition of 'if' must be bool, found i32
+   --> if_int.slick:2:8
+    |
+  2 |     if 1 { }
+    |        ^ Expected bool
+    |
+  Help: To test for nonzero, compare it
+    |
+  2 |     if 1 != 0 { }
+    |         +++++
+  
+  Error: Could not compile 'if_int.slick' due to 1 error
   [1]
 
   $ cat > while_int.slick <<'EOF'
@@ -226,7 +249,18 @@ Conditions must be bool.
   > }
   > EOF
   $ slick run while_int.slick
-  while_int.slick:2:11: error: condition of 'while' must be bool, found i32
+  Error: Condition of 'while' must be bool, found i32
+   --> while_int.slick:2:11
+    |
+  2 |     while 0 { }
+    |           ^ Expected bool
+    |
+  Help: To test for nonzero, compare it
+    |
+  2 |     while 0 != 0 { }
+    |            +++++
+  
+  Error: Could not compile 'while_int.slick' due to 1 error
   [1]
 
   $ cat > elseif_int.slick <<'EOF'
@@ -235,7 +269,18 @@ Conditions must be bool.
   > }
   > EOF
   $ slick run elseif_int.slick
-  elseif_int.slick:2:26: error: condition of 'if' must be bool, found i32
+  Error: Condition of 'if' must be bool, found i32
+   --> elseif_int.slick:2:26
+    |
+  2 |     if false { } else if 5 { }
+    |                          ^ Expected bool
+    |
+  Help: To test for nonzero, compare it
+    |
+  2 |     if false { } else if 5 != 0 { }
+    |                           +++++
+  
+  Error: Could not compile 'elseif_int.slick' due to 1 error
   [1]
 
 Braces are required.
@@ -246,7 +291,13 @@ Braces are required.
   > }
   > EOF
   $ slick run no_braces.slick
-  no_braces.slick:2:13: error: expected '{', found 'print'
+  Error: Expected '{', found 'print'
+   --> no_braces.slick:2:13
+    |
+  2 |     if true print(1);
+    |             ^^^^^ Expected '{'
+  
+  Error: Could not compile 'no_braces.slick' due to 1 error
   [1]
 
   $ cat > else_no_braces.slick <<'EOF'
@@ -255,5 +306,12 @@ Braces are required.
   > }
   > EOF
   $ slick run else_no_braces.slick
-  else_no_braces.slick:2:22: error: expected '{' or 'if' after 'else', found 'print'
+  Error: Expected '{' or 'if' after 'else', found 'print'
+   --> else_no_braces.slick:2:22
+    |
+  2 |     if true { } else print(1);
+    |                      ^^^^^ Expected '{' or 'if' after 'else'
+  
+  Error: Could not compile 'else_no_braces.slick' due to 1 error
   [1]
+

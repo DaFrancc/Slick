@@ -98,7 +98,15 @@ A literal must fit in i32. 2147483648 only fits when negated.
   > }
   > EOF
   $ slick run big.slick
-  big.slick:2:11: error: integer literal 2147483648 does not fit in i32
+  Error: Integer literal 2147483648 does not fit in i32
+   --> big.slick:2:11
+    |
+  2 |     print(2147483648);
+    |           ^^^^^^^^^^ Too large
+    |
+  Note: An i32 holds values from -2147483648 to 2147483647
+  
+  Error: Could not compile 'big.slick' due to 1 error
   [1]
 
   $ cat > huge.slick <<'EOF'
@@ -107,7 +115,15 @@ A literal must fit in i32. 2147483648 only fits when negated.
   > }
   > EOF
   $ slick run huge.slick
-  huge.slick:2:11: error: integer literal 99999999999999999999999 does not fit in i32
+  Error: Integer literal 99999999999999999999999 does not fit in i32
+   --> huge.slick:2:11
+    |
+  2 |     print(99999999999999999999999);
+    |           ^^^^^^^^^^^^^^^^^^^^^^^ Too large
+    |
+  Note: An i32 holds values from -2147483648 to 2147483647
+  
+  Error: Could not compile 'huge.slick' due to 1 error
   [1]
 
   $ cat > hex.slick <<'EOF'
@@ -116,7 +132,15 @@ A literal must fit in i32. 2147483648 only fits when negated.
   > }
   > EOF
   $ slick run hex.slick
-  hex.slick:2:11: error: '0x10' is not a valid integer literal
+  Error: Invalid integer literal '0x10'
+   --> hex.slick:2:11
+    |
+  2 |     print(0x10);
+    |           ^^^^ Only digits and '_' are allowed
+    |
+  Note: Hexadecimal, binary and float literals are not supported yet
+  
+  Error: Could not compile 'hex.slick' due to 1 error
   [1]
 
 Dividing by zero is a runtime panic. Output printed before it still appears
@@ -131,7 +155,11 @@ first.
   > EOF
   $ slick run divzero.slick
   1
-  divzero.slick:3: panic: division by zero
+  Panic: Division by zero
+   --> divzero.slick:3:15
+    |
+  3 |     print(1 / 0);
+    |               ^ This is zero
   [1]
 
   $ cat > remzero.slick <<'EOF'
@@ -142,7 +170,11 @@ first.
   > EOF
   $ slick run remzero.slick
   1
-  remzero.slick:3: panic: remainder by zero
+  Panic: Remainder by zero
+   --> remzero.slick:3:15
+    |
+  3 |     print(1 % 0);
+    |               ^ This is zero
   [1]
 
 An expression can break across lines anywhere, including before an operator.
@@ -167,7 +199,13 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run print_bool.slick
-  print_bool.slick:2:11: error: argument 1 of 'print' expects i32, found bool
+  Error: Argument 1 of 'print' expects i32, found bool
+   --> print_bool.slick:2:11
+    |
+  2 |     print(true);
+    |           ^^^^ This is bool
+  
+  Error: Could not compile 'print_bool.slick' due to 1 error
   [1]
 
   $ cat > add_bool.slick <<'EOF'
@@ -176,25 +214,50 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run add_bool.slick
-  add_bool.slick:2:13: error: operator '+' expects i32 operands, found i32 and bool
+  Error: Operator '+' expects i32 operands, found i32 and bool
+   --> add_bool.slick:2:13
+    |
+  2 |     print(1 + true);
+    |           - i32
+    |             ^
+    |               ---- bool
+  
+  Error: Could not compile 'add_bool.slick' due to 1 error
   [1]
 
   $ cat > less_bool.slick <<'EOF'
   > main :: fn() {
-  >     print(false < 1);
+  >     b := false < 1;
   > }
   > EOF
   $ slick run less_bool.slick
-  less_bool.slick:2:17: error: operator '<' expects i32 operands, found bool and i32
+  Error: Operator '<' expects i32 operands, found bool and i32
+   --> less_bool.slick:2:16
+    |
+  2 |     b := false < 1;
+    |          ----- bool
+    |                ^
+    |                  - i32
+  
+  Error: Could not compile 'less_bool.slick' due to 1 error
   [1]
 
   $ cat > not_int.slick <<'EOF'
   > main :: fn() {
-  >     print(!1);
+  >     b := !1;
   > }
   > EOF
   $ slick run not_int.slick
-  not_int.slick:2:11: error: operator '!' expects bool, found i32
+  Error: Operator '!' expects bool, found i32
+   --> not_int.slick:2:10
+    |
+  2 |     b := !1;
+    |          ^
+    |           - i32
+    |
+  Help: To test for zero, compare it: '1 == 0'
+  
+  Error: Could not compile 'not_int.slick' due to 1 error
   [1]
 
   $ cat > neg_bool.slick <<'EOF'
@@ -203,25 +266,48 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run neg_bool.slick
-  neg_bool.slick:2:11: error: operator '-' expects i32, found bool
+  Error: Operator '-' expects i32, found bool
+   --> neg_bool.slick:2:11
+    |
+  2 |     print(-true);
+    |           ^
+    |            ---- bool
+  
+  Error: Could not compile 'neg_bool.slick' due to 1 error
   [1]
 
   $ cat > eq_mixed.slick <<'EOF'
   > main :: fn() {
-  >     print(1 == true);
+  >     b := 1 == true;
   > }
   > EOF
   $ slick run eq_mixed.slick
-  eq_mixed.slick:2:13: error: operator '==' needs both sides to have the same type, found i32 and bool
+  Error: Operator '==' needs both sides to have the same type, found i32 and bool
+   --> eq_mixed.slick:2:12
+    |
+  2 |     b := 1 == true;
+    |          - i32
+    |            ^^
+    |               ---- bool
+  
+  Error: Could not compile 'eq_mixed.slick' due to 1 error
   [1]
 
   $ cat > and_int.slick <<'EOF'
   > main :: fn() {
-  >     print(true && 1);
+  >     b := true && 1;
   > }
   > EOF
   $ slick run and_int.slick
-  and_int.slick:2:16: error: operator '&&' expects bool operands, found bool and i32
+  Error: Operator '&&' expects bool operands, found bool and i32
+   --> and_int.slick:2:15
+    |
+  2 |     b := true && 1;
+    |          ---- bool
+    |               ^^
+    |                  - i32
+  
+  Error: Could not compile 'and_int.slick' due to 1 error
   [1]
 
   $ cat > cmp_result.slick <<'EOF'
@@ -230,7 +316,13 @@ Operand type errors, each pointing at the operator.
   > }
   > EOF
   $ slick run cmp_result.slick
-  cmp_result.slick:2:11: error: argument 1 of 'print' expects i32, found bool
+  Error: Argument 1 of 'print' expects i32, found bool
+   --> cmp_result.slick:2:11
+    |
+  2 |     print(1 == 1);
+    |           ^^^^^^ This is bool
+  
+  Error: Could not compile 'cmp_result.slick' due to 1 error
   [1]
 
 Comparisons cannot be chained.
@@ -241,7 +333,19 @@ Comparisons cannot be chained.
   > }
   > EOF
   $ slick run chain.slick
-  chain.slick:2:17: error: comparisons cannot be chained; combine them with '&&'
+  Error: Comparisons cannot be chained
+   --> chain.slick:2:17
+    |
+  2 |     print(1 < 2 < 3);
+    |             -
+    |                 ^
+    |
+  Help: Combine them with '&&'
+    |
+  2 |     print(1 < 2 && 2 < 3);
+    |                 +++++
+  
+  Error: Could not compile 'chain.slick' due to 1 error
   [1]
 
 Only calls can be statements.
@@ -252,7 +356,15 @@ Only calls can be statements.
   > }
   > EOF
   $ slick run nothing.slick
-  nothing.slick:2:5: error: this expression does nothing; only calls can be used as statements
+  Error: This expression does nothing
+   --> nothing.slick:2:5
+    |
+  2 |     1 + 2;
+    |     ^^^^^ Its value is not used
+    |
+  Help: Only calls can be statements. To keep the value, give it a name: 'value := 1 + 2;'.
+  
+  Error: Could not compile 'nothing.slick' due to 1 error
   [1]
 
 Malformed expressions.
@@ -263,7 +375,34 @@ Malformed expressions.
   > }
   > EOF
   $ slick run paren.slick
-  paren.slick:2:18: error: expected ')', found ';'
+  Error: Unclosed '('
+   --> paren.slick:2:18
+    |
+  2 |     print((1 + 2));
+    |                  + Expected ')'
+  
+  Error: Could not compile 'paren.slick' due to 1 error
+  [1]
+
+A ')' missing at the end of a line is reported there, not at the start of
+the next line. The missing ')' is shown in place, with '+' under it.
+
+  $ cat > paren_eol.slick <<'EOF'
+  > fib :: fn(n: i32) -> i32 { return n; }
+  > main :: fn() {
+  >     i : mut = 0;
+  >     print(fib(i)
+  >     i += 1;
+  > }
+  > EOF
+  $ slick run paren_eol.slick
+  Error: Unclosed '('
+   --> paren_eol.slick:4:17
+    |
+  4 |     print(fib(i))
+    |                 + Expected ')'
+  
+  Error: Could not compile 'paren_eol.slick' due to 1 error
   [1]
 
   $ cat > missing_operand.slick <<'EOF'
@@ -272,7 +411,13 @@ Malformed expressions.
   > }
   > EOF
   $ slick run missing_operand.slick
-  missing_operand.slick:2:14: error: expected an expression, found ')'
+  Error: Expected an expression, found ')'
+   --> missing_operand.slick:2:14
+    |
+  2 |     print(1 +);
+    |              ^ Expected an expression
+  
+  Error: Could not compile 'missing_operand.slick' due to 1 error
   [1]
 
 Argument counts for print.
@@ -283,7 +428,13 @@ Argument counts for print.
   > }
   > EOF
   $ slick run print_two.slick
-  print_two.slick:2:5: error: 'print' expects 1 argument, found 2
+  Error: 'print' expects 1 argument, found 2
+   --> print_two.slick:2:10
+    |
+  2 |     print(1, 2);
+    |          ^^^^^^ Found 2 arguments
+  
+  Error: Could not compile 'print_two.slick' due to 1 error
   [1]
 
   $ cat > print_none.slick <<'EOF'
@@ -292,5 +443,88 @@ Argument counts for print.
   > }
   > EOF
   $ slick run print_none.slick
-  print_none.slick:2:5: error: 'print' expects 1 argument, found 0
+  Error: 'print' expects 1 argument, found 0
+   --> print_none.slick:2:10
+    |
+  2 |     print();
+    |          ^^ Found 0 arguments
+  
+  Error: Could not compile 'print_none.slick' due to 1 error
   [1]
+
+A comparison used as a statement was probably meant as an assignment.
+
+  $ cat > eq_stmt.slick <<'EOF'
+  > main :: fn() {
+  >     x : mut = 0;
+  >     x == 1;
+  > }
+  > EOF
+  $ slick run eq_stmt.slick
+  Error: This expression does nothing
+   --> eq_stmt.slick:3:5
+    |
+  3 |     x == 1;
+    |     ^^^^^^ Its value is not used
+    |
+  Help: To assign, use '='
+    |
+  3 |     x = 1;
+    |       ~
+  
+  Error: Could not compile 'eq_stmt.slick' due to 1 error
+  [1]
+
+Single '&' and '|', and a float literal.
+
+  $ cat > amp.slick <<'EOF'
+  > main :: fn() {
+  >     if true & false { }
+  > }
+  > EOF
+  $ slick run amp.slick
+  Error: Unexpected character '&'
+   --> amp.slick:2:13
+    |
+  2 |     if true & false { }
+    |             ^
+    |
+  Help: Use '&&' for logical and
+  
+  Error: Could not compile 'amp.slick' due to 1 error
+  [1]
+
+  $ cat > pipe.slick <<'EOF'
+  > main :: fn() {
+  >     if true | false { }
+  > }
+  > EOF
+  $ slick run pipe.slick
+  Error: Unexpected character '|'
+   --> pipe.slick:2:13
+    |
+  2 |     if true | false { }
+    |             ^
+    |
+  Help: Use '||' for logical or
+  
+  Error: Could not compile 'pipe.slick' due to 1 error
+  [1]
+
+  $ cat > float.slick <<'EOF'
+  > main :: fn() {
+  >     print(1.5);
+  > }
+  > EOF
+  $ slick run float.slick
+  Error: Unexpected character '.'
+   --> float.slick:2:12
+    |
+  2 |     print(1.5);
+    |            ^
+    |
+  Note: Float literals are not supported yet
+  
+  Error: Could not compile 'float.slick' due to 1 error
+  [1]
+

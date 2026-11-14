@@ -101,7 +101,11 @@ A division that panics stops the program before later operands run.
   > EOF
   $ slick run div_order.slick
   0
-  div_order.slick:19: panic: division by zero
+  Panic: Division by zero
+    --> div_order.slick:19:16
+     |
+  19 |     print(10 / zero() + noisy(5));
+     |                ^^^^^^ This is zero
   [1]
 
 && and || skip their right side when the left decides the result, including

@@ -1,2 +1,5 @@
+; unix is only used for isatty, to decide whether to color diagnostics.
+
 (library
- (name slick))
+ (name slick)
+ (libraries unix))
